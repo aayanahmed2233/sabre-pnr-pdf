@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sabre Red 360° AI PNR Screenshot → PDF Generator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- TOP NAVIGATION BAR -->
+  <header class="topbar no-print">
+    <div class="brand">
+      <div class="brand-badge">SR<span>360</span></div>
+      <div>
+        <h1>Sabre Red 360° <span>AI PNR → PDF Studio</span></h1>
+        <p>Upload any PNR Screenshot → AI Extracts Flights &amp; Passengers → Official Sabre Itinerary PDF</p>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <button type="button" id="btnAiSettings" class="btn btn-ghost" title="Configure Free AI or ChatGPT / Gemini / Groq API">
+        <span class="dot-live"></span>
+        <span id="aiModeLabel">AI: Free Built-in (Active)</span>
+      </button>
+
+      <button type="button" id="btnAgencyModal" class="btn btn-outline">
+        🏢 Agency Branding
+      </button>
+
+      <a href="/api/download-source" class="btn btn-vscode" title="Download Complete Project Folder for VS Code (.zip)">
+        💻 Download VS Code Code (.zip)
+      </a>
+    </div>
+  </header>
+
+  <!-- MAIN WORKSPACE -->
+  <main class="workspace">
+    <!-- LEFT PANEL: UPLOAD SCREENSHOT + AI EXTRACTED EDITOR -->
+    <section class="left-panel no-print">
+
+      <!-- UPLOAD / PASTE PNR CARD -->
+      <div class="panel-card upload-card">
+        <div class="card-tabs">
+          <button type="button" class="tab-btn active" data-tab="imageTab">📸 Upload PNR Screenshot</button>
+          <button type="button" class="tab-btn" data-tab="textTab">⌨️ Paste PNR / GDS Text</button>
+        </div>
+
+        <!-- TAB 1: SCREENSHOT DROPZONE -->
+        <div id="imageTab" class="tab-pane active">
+          <div id="dropzone" class="dropzone" tabindex="0">
+            <input type="file" id="fileInput" accept="image/*" hidden />
+            <div id="dropzoneEmpty" class="dropzone-empty">
+              <div class="upload-icon">✈️</div>
+              <h3>Drop PNR Screenshot Here or Click to Browse</h3>
+              <p>Supports Sabre Red 360, Amadeus, Galileo, Airline Websites, OTA &amp; WhatsApp Screenshots — or press <kbd>Ctrl</kbd>+<kbd>V</kbd> to paste!</p>
+            </div>
+
+            <div id="dropzonePreview" class="dropzone-preview hidden">
+              <img id="uploadedThumb" alt="Uploaded PNR Screenshot" />
+              <div class="preview-overlay">
+                <button type="button" id="btnRescan" class="btn btn-sm btn-primary">🔍 Re-Scan with AI</button>
+                <button type="button" id="btnChangeImg" class="btn btn-sm btn-ghost-dark">Change Screenshot</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- SAMPLE SCREENSHOTS BAR -->
+          <div class="samples-bar">
+            <span class="samples-label">Test Instant Sample Screenshot:</span>
+            <div class="sample-pills">
+              <button type="button" class="sample-pill" data-sample="sabre-terminal-umrah.png">
+                🟢 Sabre Terminal (*A Umrah)
+              </button>
+              <button type="button" class="sample-pill" data-sample="emirates-web-pnr.png">
+                🔴 Emirates Booking (2 Pax)
+              </button>
+              <button type="button" class="sample-pill" data-sample="pia-domestic-pnr.png">
+                🇵🇰 PIA Domestic (KHI-ISB)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: PASTE RAW GDS / PNR TEXT -->
+        <div id="textTab" class="tab-pane">
+          <textarea
+            id="rawPnrInput"
+            rows="6"
+            placeholder="Paste Sabre (*A), Amadeus, Galileo cryptic PNR text or booking confirmation text here...&#10;Example:&#10;K8M4R9&#10;1.1KHAN/MUHAMMAD TARIQ MR&#10;1 SV 705 Y 18NOV 3 KHIJED HK1 0415 0625 /DCSV*L9P2X4 /E"
+          ></textarea>
+          <button type="button" id="btnParseText" class="btn btn-primary btn-full" style="margin-top:8px;">
+            ✨ Extract PNR Details with AI
+          </button>
+        </div>
+
+        <!-- AI STATUS BANNER -->
+        <div id="aiStatusBox" class="ai-status hidden">
+          <div class="spinner" id="aiSpinner"></div>
+          <div class="ai-status-text">
+            <strong id="aiStatusTitle">Scanning PNR Screenshot with AI...</strong>
+            <span id="aiStatusSub">Enhancing image contrast &amp; extracting PNR, flights, passengers &amp; tickets</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- BOOKING HEADER FIELDS -->
+      <div class="panel-card">
+        <div class="section-header">
+          <h2>1. PNR &amp; Reservation Codes</h2>
+          <span class="badge-hint">Auto-filled by AI • Editable</span>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Sabre / GDS Reservation Code (PNR)</label>
+            <input type="text" id="inpPnr" maxlength="10" placeholder="e.g. K8M4R9" />
+          </div>
+          <div class="field">
+            <label>Airline Reservation Code</label>
+            <input type="text" id="inpAirlinePnr" placeholder="e.g. L9P2X4 (SV)" />
+          </div>
+          <div class="field">
+            <label>Date of Issue</label>
+            <input type="text" id="inpIssueDate" placeholder="e.g. WEDNESDAY 28 OCT 2026" />
+          </div>
+          <div class="field">
+            <label>Booking Status</label>
+            <select id="inpBookingStatus">
+              <option value="Confirmed">Confirmed (HK / OK)</option>
+              <option value="On Hold">On Hold (Time Limit)</option>
+              <option value="Waitlisted">Waitlisted (HL)</option>
+              <option value="Cancelled">Cancelled (HX)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- PASSENGERS LIST -->
+      <div class="panel-card">
+        <div class="section-header">
+          <h2>2. Passengers &amp; e-Tickets (<span id="paxCountBadge">1</span>)</h2>
+          <button type="button" id="btnAddPax" class="btn btn-xs btn-outline">+ Add Passenger</button>
+        </div>
+        <div id="passengersContainer" class="stack-list"></div>
+      </div>
+
+      <!-- FLIGHT SEGMENTS LIST -->
+      <div class="panel-card">
+        <div class="section-header">
+          <h2>3. Flight Itinerary Segments (<span id="fltCountBadge">1</span>)</h2>
+          <button type="button" id="btnAddFlight" class="btn btn-xs btn-outline">+ Add Flight</button>
+        </div>
+        <div id="flightsContainer" class="stack-list"></div>
+      </div>
+
+      <!-- FARE & REMARKS OPTIONS -->
+      <div class="panel-card">
+        <div class="section-header">
+          <h2>4. Fare Display &amp; Remarks</h2>
+          <label class="toggle-switch">
+            <input type="checkbox" id="chkShowFare" />
+            <span>Show Fare on PDF</span>
+          </label>
+        </div>
+
+        <div id="fareFieldsWrap" class="grid-2 hidden" style="margin-bottom: 12px;">
+          <div class="field">
+            <label>Currency</label>
+            <select id="inpCurrency">
+              <option value="PKR">PKR (Pakistani Rupee)</option>
+              <option value="USD">USD (US Dollar)</option>
+              <option value="SAR">SAR (Saudi Riyal)</option>
+              <option value="AED">AED (UAE Dirham)</option>
+              <option value="GBP">GBP (British Pound)</option>
+              <option value="EUR">EUR (Euro)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Form of Payment</label>
+            <input type="text" id="inpPaymentMethod" placeholder="CASH / INVOICE" />
+          </div>
+          <div class="field">
+            <label>Base Fare</label>
+            <input type="text" id="inpBaseFare" placeholder="e.g. 148,000" />
+          </div>
+          <div class="field">
+            <label>Taxes &amp; Fees</label>
+            <input type="text" id="inpTaxes" placeholder="e.g. 50,500" />
+          </div>
+          <div class="field grid-span-2">
+            <label>Total Ticket Amount</label>
+            <input type="text" id="inpTotalFare" placeholder="e.g. 198,500" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Custom Agency / SSR Remarks (Optional — 1 per line)</label>
+          <textarea id="inpRemarks" rows="2" placeholder="e.g. UMRAH VISA VALIDATED • OK TO BOARD COMPLETED"></textarea>
+        </div>
+
+        <!-- COLLAPSIBLE OCR DEBUG VIEWER -->
+        <details class="ocr-details">
+          <summary>View Raw AI / OCR Scanned Text</summary>
+          <pre id="ocrRawOutput">No screenshot scanned yet.</pre>
+        </details>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL: LIVE SABRE RED 360 A4 PREVIEW & PDF DOWNLOAD -->
+    <section class="right-panel">
+      <div class="preview-toolbar no-print">
+        <div class="template-group">
+          <label>Sabre Style:</label>
+          <button type="button" class="tpl-btn active" data-template="sabre-classic">
+            Sabre Classic GDS (EMXP)
+          </button>
+          <button type="button" class="tpl-btn" data-template="sabre-red">
+            Sabre Red 360 Graphical
+          </button>
+        </div>
+
+        <div class="download-group">
+          <button type="button" id="btnOpenPdfTab" class="btn btn-outline" title="Preview Generated Vector PDF">
+            📄 View PDF File
+          </button>
+          <button type="button" id="btnPrintTicket" class="btn btn-outline">
+            🖨️ Print
+          </button>
+          <button type="button" id="btnDownloadPdf" class="btn btn-sabre-red">
+            ⬇ Download Sabre Red 360 PDF
+          </button>
+        </div>
+      </div>
+
+      <!-- AUTHENTIC SABRE RED 360 A4 SHEET PREVIEW -->
+      <div class="paper-stage">
+        <div id="sabrePaper" class="sabre-paper tpl-classic">
+          <!-- Populated dynamically by app.js -->
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL 1: AI PROVIDER SETTINGS -->
+  <div id="aiModal" class="modal-backdrop hidden no-print">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>🤖 AI Vision &amp; Extraction Engine Settings</h3>
+        <button type="button" class="modal-close" data-close="aiModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-note">
+          <strong>Free Built-in AI</strong> works immediately with <strong>zero API key</strong>! If you also want direct Vision LLM scanning via ChatGPT, Free Google Gemini, or Free Groq, select below:
+        </p>
+
+        <div class="field">
+          <label>Select AI Provider</label>
+          <select id="selAiProvider">
+            <option value="free">✅ Free Built-in AI (Smart Vision OCR + Sabre GDS &amp; Cloud AI — No Key Needed!)</option>
+            <option value="gemini">✨ Google Gemini 2.0 Flash Vision (FREE API Key from Google AI Studio)</option>
+            <option value="groq">⚡ Groq Llama-4 Scout Vision (FREE API Key from console.groq.com)</option>
+            <option value="openai">🧠 OpenAI ChatGPT Vision (gpt-4o-mini / gpt-4o)</option>
+          </select>
+        </div>
+
+        <div id="apiKeyGroup" class="hidden">
+          <div class="field" style="margin-top:10px;">
+            <label id="lblApiKey">API Key</label>
+            <input type="password" id="inpApiKey" placeholder="Paste your API key here (saved locally in browser)" />
+          </div>
+          <div class="field" style="margin-top:10px;">
+            <label>Model Name</label>
+            <input type="text" id="inpAiModel" placeholder="e.g. gpt-4o-mini or gemini-2.0-flash" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" data-close="aiModal">Cancel</button>
+        <button type="button" id="btnSaveAiSettings" class="btn btn-primary">Save AI Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: AGENCY BRANDING SETTINGS -->
+  <div id="agencyModal" class="modal-backdrop hidden no-print">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>🏢 Travel Agency Header &amp; Logo (Sabre PDF Top-Right)</h3>
+        <button type="button" class="modal-close" data-close="agencyModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid-2">
+          <div class="field grid-span-2">
+            <label>Travel Agency Name</label>
+            <input type="text" id="agName" placeholder="e.g. SKYLINE TRAVELS & TOURS" />
+          </div>
+          <div class="field grid-span-2">
+            <label>Office Address</label>
+            <input type="text" id="agAddress" placeholder="e.g. Suite 204, Shahrah-e-Faisal, Karachi, Pakistan" />
+          </div>
+          <div class="field">
+            <label>Phone / WhatsApp</label>
+            <input type="text" id="agPhone" placeholder="+92 21 3452 9900" />
+          </div>
+          <div class="field">
+            <label>Agency Email</label>
+            <input type="text" id="agEmail" placeholder="ticketing@skylinetravels.pk" />
+          </div>
+          <div class="field grid-span-2">
+            <label>Sabre PCC / IATA Number</label>
+            <input type="text" id="agIata" placeholder="PCC: 7K4I  |  IATA: 27-3-4910" />
+          </div>
+          <div class="field grid-span-2">
+            <label>Agency Logo (Optional PNG/JPG — appears top-right on PDF)</label>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <input type="file" id="agLogoInput" accept="image/png,image/jpeg" />
+              <button type="button" id="btnClearLogo" class="btn btn-xs btn-outline">Remove Logo</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" data-close="agencyModal">Cancel</button>
+        <button type="button" id="btnSaveAgency" class="btn btn-primary">Save Agency Details</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 3: VECTOR PDF PREVIEW VIEWER -->
+  <div id="pdfPreviewModal" class="modal-backdrop hidden no-print">
+    <div class="modal-box modal-xl">
+      <div class="modal-header">
+        <h3>📄 Generated Sabre Red 360 Vector PDF Preview</h3>
+        <button type="button" class="modal-close" data-close="pdfPreviewModal">&times;</button>
+      </div>
+      <div class="modal-body" style="padding:0; height: 76vh; background:#334155;">
+        <iframe id="pdfPreviewFrame" title="Sabre PDF Preview" style="width:100%; height:100%; border:none;"></iframe>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" data-close="pdfPreviewModal">Close</button>
+        <button type="button" id="btnModalDownloadPdf" class="btn btn-sabre-red">⬇ Download PDF File</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

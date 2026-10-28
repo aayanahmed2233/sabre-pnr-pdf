@@ -1,0 +1,30 @@
+{
+  "name": "sabre-red360-pnr-ai-pdf",
+  "version": "1.0.0",
+  "description": "Upload any PNR screenshot -> AI extracts PNR, Flights, Passengers, Tickets & Baggage -> Generates exact Sabre Red 360 style Itinerary & E-Ticket PDF",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "pnr",
+    "sabre-red-360",
+    "itinerary",
+    "e-ticket",
+    "pdf-generator",
+    "ai-ocr",
+    "gds"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "pdfkit": "^0.15.2",
+    "sharp": "^0.33.5",
+    "tesseract.js": "^5.1.1"
+  }
+}
