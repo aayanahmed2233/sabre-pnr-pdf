@@ -1,93 +1,98 @@
 # J.A.R.V.I.S — Windows AI Assistant
 
-A Jarvis-style desktop chat assistant for Windows. It connects to your
-**FreeLLMAPI** (any OpenAI-compatible API) using a **base URL + API key**,
-fetches the list of models it offers, and lets you chat with them in a
-clean, dark, cyan-accented window.
+A Jarvis-style desktop assistant for Windows. It connects to your
+**FreeLLMAPI** (any OpenAI-compatible API) using a **base URL + key**, fetches
+the models your key can access, and lets you chat with them in a clean,
+dark, cyan-accented window. Replies **stream in live**.
 
-Chat replies **stream in live**, so it feels like a real assistant.
-
----
-
-## What you get
-
-- `main.py` — the app (pure Python standard library + Tkinter; nothing else to install to run it)
-- `build.bat` — turns the app into a single `jarvis.exe`
-- `run.bat` — runs the app directly with Python (no build needed)
-- `requirements.txt` — only used when building the .exe (PyInstaller)
+> Status: **Phase 1 (FreeLLMAPI cloud brain) built.** Voice, Windows control,
+> browser, coding agent, and the optional offline brain come in later phases.
+> Nothing is marked "working" until you run the test on your PC and confirm.
 
 ---
 
-## Option A — Run without building (quick test)
+## Requirements
 
-1. Install Python 3 from <https://www.python.org/downloads/windows/>.
-   **On the first install screen, tick “Add python.exe to PATH”.**
-2. Double-click **`run.bat`**.
+- **Python 3.12** recommended (newer 3.14/3.15 may lack wheels for some libs).
+  On the first install screen, tick **"Add python.exe to PATH"**.
+- Internet + a FreeLLMAPI base URL and key.
 
-The Settings window opens on first launch.
+No third-party Python packages are required to RUN — only the standard library
+and Tkinter (bundled with the official Windows Python installer).
 
 ---
 
-## Option B — Build a standalone `jarvis.exe` (recommended)
+## Run
 
-1. Install Python 3 (see above, remember “Add to PATH”).
+1. Double-click **`run.bat`** (or: `python main.py` in the `jarvis` folder).
+2. On first launch, **Settings** opens. Enter:
+   - **AI Brain:** `freellm`
+   - **Base URL:** your FreeLLMAPI URL (`/v1` added automatically if missing)
+   - **API Key:** your key
+   - **Model:** blank to auto-pick the first available
+3. Click **Save**. Models load into the dropdown. Pick one and chat.
+
+Settings are saved to `config.json` next to the app. Your key stays local.
+
+---
+
+## Self-test (run this!)
+
+Before trusting the app, run the Phase 1 self-test:
+
+```
+python selftest_phase1.py
+```
+
+It checks config, backend selection, readiness, message building, and graceful
+handling of the not-yet-built local brain — **without any network**.
+
+For one real live request against your FreeLLMAPI:
+
+```
+python selftest_phase1.py --live "https://your-free-llm-api.com" "YOUR_KEY" "model-id"
+```
+
+Report the printed PASS/FAIL lines back so each feature can be marked done.
+
+---
+
+## Build a standalone jarvis.exe
+
+1. Install Python 3.12 (Add to PATH).
 2. Double-click **`build.bat`**.
-3. When it finishes, your program is at **`dist\jarvis.exe`**.
+3. Output: `dist\jarvis.exe`. Copy it anywhere; settings go in `config.json`
+   next to the exe.
 
-`jarvis.exe` is a single file. Copy it anywhere (Desktop, etc.) and run it —
-no Python needed on the target PC. Settings are stored in `config.json`
-created **next to the .exe** the first time you save them.
-
-> Tip: to give it a custom icon, add `--icon=myicon.ico` to the PyInstaller
-> line in `build.bat`.
+`requirements.txt` is only for building (PyInstaller).
 
 ---
 
-## First-time setup (Settings)
+## Architecture (modular)
 
-Open **Settings** and fill in:
+```
+jarvis/
+  main.py            # GUI + wiring (Tkinter)
+  core/config.py     # settings (config.json), defaults
+  ai/engine.py       # AI engine: backend selection + streaming
+     ├─ FreeLLMApiBackend   (primary cloud brain)
+     └─ LocalBackend        (offline llama.cpp — Phase 2 placeholder)
+  audit_hardware.py  # CPU/RAM probe
+  selftest_phase1.py # tests
+  build.bat / run.bat
+```
 
-| Field | What to enter |
-|-------|---------------|
-| **Base URL** | Your FreeLLMAPI base URL. `…/v1` is added automatically if missing. e.g. `https://your-free-llm-api.com` |
-| **API Key** | Your FreeLLMAPI key |
-| **Model** | Leave blank to auto-select the first available model |
-| **System prompt** | The assistant's persona (a JARVIS-style default is included) |
-| **Temperature** | 0 = focused, 1+ = creative |
-
-Click **Save**. The app then calls **Refresh models** automatically and fills
-the model dropdown with every model your key can access. Pick one and start
-chatting.
-
-Your key is saved locally in `config.json` on your own PC only — it is never
-sent anywhere except your FreeLLMAPI.
+Design rule: the AI **never** executes anything directly. Tool execution will
+go through a Security + Tool layer in a later phase.
 
 ---
 
-## Using it
+## Hardware notes (from your audit)
 
-- Type a message and press **Enter** to send.
-- **Shift+Enter** inserts a new line.
-- **Refresh models** re-fetches the model list.
-- **Clear chat** wipes the conversation history.
-- **Settings** re-opens configuration any time.
-
----
-
-## Troubleshooting
-
-- **“Python was not found”** → install Python and tick *Add to PATH*, then reopen the terminal / re-run the script.
-- **HTTP 401 / 403** → wrong or missing API key.
-- **HTTP 404** → the Base URL is wrong. It should point at the API root; the app appends `/v1/chat/completions` and `/v1/models`.
-- **No models returned** → some providers need the exact base path (with or without `/v1`). Try toggling the `/v1` suffix in the Base URL.
-- **Antivirus flags jarvis.exe** → common for PyInstaller builds; it's a false positive from the packer. You can allow it or run via `run.bat` instead.
-
----
-
-## How it works (short version)
-
-- `GET  {base}/v1/models`            → list available models
-- `POST {base}/v1/chat/completions`  → send chat (with `stream: true` for live text)
-
-Uses only `urllib` from the standard library, so there are no runtime
-dependencies. Tkinter ships with the official Windows Python installer.
+Your machine reported: AMD64 Family 16, ~3.75 GB RAM, Windows 10, no
+AVX/SSE4.2. Implications:
+- FreeLLMAPI cloud brain runs fine (needs only internet).
+- A local offline brain (Phase 2) would need a **self-compiled, no-AVX llama.cpp**
+  build and a very small model; RAM is tight, so the cloud brain stays primary.
+- Chromium (browser agent) should run (needs SSE3, which you have) — to be
+  verified in Phase 6.
