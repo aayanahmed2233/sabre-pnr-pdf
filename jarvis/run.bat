@@ -1,5 +1,6 @@
 @echo off
 REM Run JARVIS directly with Python (no need to build an .exe).
+cd /d "%~dp0"
 python main.py
 if errorlevel 1 (
     echo.
