@@ -1,98 +1,116 @@
 # J.A.R.V.I.S — Windows AI Assistant
 
-A Jarvis-style desktop assistant for Windows. It connects to your
-**FreeLLMAPI** (any OpenAI-compatible API) using a **base URL + key**, fetches
-the models your key can access, and lets you chat with them in a clean,
-dark, cyan-accented window. Replies **stream in live**.
+A modular, Jarvis-style desktop assistant for Windows.
 
-> Status: **Phase 1 (FreeLLMAPI cloud brain) built.** Voice, Windows control,
-> browser, coding agent, and the optional offline brain come in later phases.
-> Nothing is marked "working" until you run the test on your PC and confirm.
+- **Brain:** FreeLLMAPI (cloud, primary) — base URL + key, fetches **all** models
+  your key can access; replies **stream live**. An optional local offline brain
+  (no-AVX llama.cpp) is scaffolded for later.
+- **Voice + Windows control + browser + coding agent + memory:** local.
+- **Security layer:** every action passes a single permission/validation gate.
+- **Emergency Stop** button halts all active work.
 
----
-
-## Requirements
-
-- **Python 3.12** recommended (newer 3.14/3.15 may lack wheels for some libs).
-  On the first install screen, tick **"Add python.exe to PATH"**.
-- Internet + a FreeLLMAPI base URL and key.
-
-No third-party Python packages are required to RUN — only the standard library
-and Tkinter (bundled with the official Windows Python installer).
+> Status legend: ✅ built & self-testable now · 🔌 needs an external dependency
+> (install + test on your PC) · ⏳ later phase.
+> **Nothing is claimed "working" until you run the test on your machine and
+> paste the output.**
 
 ---
 
-## Run
+## Quick start
 
-1. Double-click **`run.bat`** (or: `python main.py` in the `jarvis` folder).
-2. On first launch, **Settings** opens. Enter:
-   - **AI Brain:** `freellm`
-   - **Base URL:** your FreeLLMAPI URL (`/v1` added automatically if missing)
-   - **API Key:** your key
-   - **Model:** blank to auto-pick the first available
-3. Click **Save**. Models load into the dropdown. Pick one and chat.
+1. Install **Python 3.12** (tick "Add python.exe to PATH").
+2. Double-click **`run.bat`** (or `python main.py` in the `jarvis` folder).
+3. **Settings** (opens on first run): choose brain `freellm`, paste Base URL +
+   API Key, Save. Models load into the dropdown.
+4. Chat. Use **EMERGENCY STOP** (red) any time to halt everything.
 
-Settings are saved to `config.json` next to the app. Your key stays local.
+No third-party packages are needed to run the core app (stdlib + Tkinter only).
 
 ---
 
-## Self-test (run this!)
-
-Before trusting the app, run the Phase 1 self-test:
+## Self-tests (run these!)
 
 ```
-python selftest_phase1.py
+python selftest_phase1.py      # AI engine, config, message building (no network)
+python selftest_phase1.py --live "https://your-api" "KEY" "model-id"   # one live call
+python selftest_phase2.py      # security, tools, file/coding agents, memory, emergency stop
 ```
 
-It checks config, backend selection, readiness, message building, and graceful
-handling of the not-yet-built local brain — **without any network**.
+Paste the PASS/FAIL lines back so features get marked done.
 
-For one real live request against your FreeLLMAPI:
+---
+
+## Phase status
+
+| # | Phase | Status | Notes |
+|---|---|---|---|
+| 1 | Desktop foundation (UI, chat, FreeLLMAPI brain, model loading/status, settings) | ✅ | Core chat + models + settings done |
+| 2 | Voice (mic, STT, TTS, Hinglish, wake word/interrupt) | 🔌 | Vosk STT + SAPI TTS wired; needs `vosk`, `sounddevice`, `pywin32` + a Vosk model; wake word later |
+| 3 | Windows control (file/folder search, open apps, kbd/mouse, system monitor) | ✅ partial | File/app/system tools built & gated; keyboard/mouse automation still to add |
+| 4 | Chrome agent (launch, research, navigate, download, summarize) | 🔌 | Playwright module built; needs `playwright install chromium`; dedicated profile only |
+| 5 | Coding agent (site dev, edit, projects, debug, terminal, web test) | ✅ | Workspace + backups + terminal + local server; gated |
+| 6 | Memory (history, project, prefs, task recovery) | ✅ | Local JSON memory; history auto-saved |
+| 7 | Multi-agent (researcher/developer/tester/file manager/coordinator) | ✅ | Deterministic coordinator; can wire to LLM later |
+| 8 | Final build (optimize, bugfix, offline test, PyInstaller EXE, installer/docs) | ⏳ | Build scripts present; final pass later |
+| — | Security layer (permission tiers + Emergency Stop) | ✅ | All tools route through `core/security.py` |
+
+### Security permission map (as implemented)
+
+| Action | Permission |
+|---|---|
+| Search files / read files | Automatic |
+| Open applications / folders | Automatic (open) |
+| Create files | Confirm |
+| Edit code | Confirm + backup (change tracking) |
+| Download files | Confirm, approved folder only |
+| Delete / overwrite files | Confirmation |
+| Install software | Confirmation |
+| Run unknown EXE | Confirmation / blockable by policy |
+| Shutdown / restart | Confirmation |
+| **Emergency Stop** | One click stops all tasks + local servers |
+
+---
+
+## Optional dependencies (for later phases)
+
+Only install what you need; the core app runs without them.
 
 ```
-python selftest_phase1.py --live "https://your-free-llm-api.com" "YOUR_KEY" "model-id"
+pip install vosk sounddevice pywin32     # voice (STT + TTS)
+pip install playwright && playwright install chromium   # browser agent
 ```
 
-Report the printed PASS/FAIL lines back so each feature can be marked done.
+Local offline brain (Phase 2 optional): build llama.cpp **without AVX** (your
+CPU has no AVX/SSSE3) and point Settings at a small Q4 GGUF model.
+
+---
+
+## Project layout
+
+```
+jarvis/
+  main.py                # GUI + wiring (chat, tools, emergency stop, voice toggle)
+  core/  config.py security.py logging_setup.py
+  ai/    engine.py       # FreeLLMAPI primary + local placeholder
+  tools/ registry.py file_agent.py app_agent.py system_monitor.py
+  agents/ coding_agent.py browser_agent.py
+  memory/ store.py
+  voice/ engine.py       # Vosk STT + SAPI TTS
+  multiagent/ coordinator.py
+  audit_hardware.py  selftest_phase1.py  selftest_phase2.py
+  build.bat  run.bat  requirements.txt
+```
 
 ---
 
 ## Build a standalone jarvis.exe
 
-1. Install Python 3.12 (Add to PATH).
-2. Double-click **`build.bat`**.
-3. Output: `dist\jarvis.exe`. Copy it anywhere; settings go in `config.json`
-   next to the exe.
+Double-click **`build.bat`** (Python 3.12, Add to PATH). Output:
+`dist\jarvis.exe`. Settings live in `config.json` next to the exe.
 
-`requirements.txt` is only for building (PyInstaller).
+## Notes
 
----
-
-## Architecture (modular)
-
-```
-jarvis/
-  main.py            # GUI + wiring (Tkinter)
-  core/config.py     # settings (config.json), defaults
-  ai/engine.py       # AI engine: backend selection + streaming
-     ├─ FreeLLMApiBackend   (primary cloud brain)
-     └─ LocalBackend        (offline llama.cpp — Phase 2 placeholder)
-  audit_hardware.py  # CPU/RAM probe
-  selftest_phase1.py # tests
-  build.bat / run.bat
-```
-
-Design rule: the AI **never** executes anything directly. Tool execution will
-go through a Security + Tool layer in a later phase.
-
----
-
-## Hardware notes (from your audit)
-
-Your machine reported: AMD64 Family 16, ~3.75 GB RAM, Windows 10, no
-AVX/SSE4.2. Implications:
-- FreeLLMAPI cloud brain runs fine (needs only internet).
-- A local offline brain (Phase 2) would need a **self-compiled, no-AVX llama.cpp**
-  build and a very small model; RAM is tight, so the cloud brain stays primary.
-- Chromium (browser agent) should run (needs SSE3, which you have) — to be
-  verified in Phase 6.
+- Your machine (from the audit): AMD64 Family 16, ~3.75 GB RAM, Windows 10,
+  no AVX/SSE4.2. FreeLLMAPI brain runs fine; a local brain needs a no-AVX build
+  and a tiny model; Chromium should run (needs SSE3) — verify in Phase 4.
+- API keys are never hardcoded; they live in `config.json` on your PC.

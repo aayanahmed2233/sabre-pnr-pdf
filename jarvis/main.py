@@ -12,13 +12,28 @@ Runs on the Python standard library only (plus Tkinter from the Windows
 Python installer). No third-party packages needed to RUN.
 """
 
+import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 
-from core.config import load_config, save_config
+from core.config import load_config, save_config, app_dir
+from core.security import Security, SecurityError
 from ai.engine import AIEngine, AIError
+from tools.registry import ToolRegistry, Tool
+from tools import file_agent, app_agent, system_monitor
+from memory.store import Memory
+
+# Optional agents (may be disabled via config / missing deps)
+_BROWSER_OK = True
+_CODING_OK = True
+try:
+    from agents.coding_agent import CodingAgent
+    from agents.browser_agent import BrowserAgent
+except Exception:  # noqa: BLE001
+    _CODING_OK = _BROWSER_OK = False
 
 # ----------------------------------------------------------------------------
 # Theme
@@ -42,6 +57,54 @@ class JarvisApp(tk.Tk):
         self.ui_queue = queue.Queue()
         self.busy = False
 
+        # ---- Security + tools foundation ----
+        base = app_dir()
+        self.security = Security.from_config(self.cfg)
+        self.security.confirm_callback = self._confirm_prompt
+        # Default roots: app dir (read) + a dedicated workspace + downloads
+        self.workspace_dir = self.cfg.get("coding", {}).get("workspace") or \
+            os.path.join(base, "workspace")
+        self.download_dir = self.cfg.get("browser", {}).get("download_dir") or \
+            os.path.join(base, "downloads")
+        self.backup_dir = self.cfg.get("coding", {}).get("backup_dir") or \
+            os.path.join(base, "backups")
+        for p in (base, self.workspace_dir, self.download_dir, self.backup_dir):
+            try:
+                os.makedirs(p, exist_ok=True)
+            except OSError:
+                pass
+            self.security.add_read_root(p)
+        for p in (self.workspace_dir, self.download_dir, self.backup_dir):
+            self.security.add_write_root(p)
+
+        self.registry = ToolRegistry(self.security, {"cfg": self.cfg})
+        self._register_tools()
+
+        # Memory (local)
+        self.memory = Memory(os.path.join(base, "memory"))
+        # Restore previous conversation if present
+        try:
+            prev = self.memory.load_history()
+            if prev:
+                self.history = prev
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Coding agent (optional)
+        self.coding = None
+        if _CODING_OK:
+            try:
+                self.coding = CodingAgent(self.security, self.workspace_dir,
+                                          self.backup_dir)
+            except Exception:  # noqa: BLE001
+                self.coding = None
+
+        # Voice (optional; only if enabled + deps present)
+        self.tts = None
+        self.stt = None
+        self.voice_on = tk.BooleanVar(value=False)
+        self._init_voice_optional()
+
         self.title("J.A.R.V.I.S")
         self.geometry("880x700")
         self.minsize(640, 480)
@@ -52,7 +115,8 @@ class JarvisApp(tk.Tk):
         self._poll_queue()
 
         self._append("system",
-                     f"JARVIS online. Brain: {self.cfg.get('ai_backend')}.")
+                     f"JARVIS online. Brain: {self.cfg.get('ai_backend')}."
+                     f" Tools: {len(self.registry.names())}.")
 
         if not self.engine.is_ready():
             self.after(300, self.open_settings)
@@ -105,6 +169,13 @@ class JarvisApp(tk.Tk):
 
         ttk.Button(bar, text="Refresh models",
                    command=self.refresh_models).pack(side="left", padx=6)
+        ttk.Button(bar, text="Voice", command=self._toggle_voice).pack(side="left", padx=6)
+
+        # Emergency Stop (always visible, red)
+        self.stop_btn = tk.Button(bar, text="EMERGENCY STOP", command=self.emergency_stop,
+                                  bg="#7f1d1d", fg="white", relief="flat",
+                                  font=("Segoe UI", 9, "bold"), padx=10, cursor="hand2")
+        self.stop_btn.pack(side="right", padx=6)
         ttk.Button(bar, text="Clear chat",
                    command=self.clear_chat).pack(side="right", padx=6)
         ttk.Button(bar, text="Settings",
@@ -134,6 +205,104 @@ class JarvisApp(tk.Tk):
         self.entry.bind("<Return>", self._on_enter)
         self.send_btn = ttk.Button(row, text="Send", command=self.send_message)
         self.send_btn.pack(side="left", padx=(10, 0), fill="y")
+
+    # ---- foundation: security, tools, voice ----
+    def _confirm_prompt(self, title, message) -> bool:
+        """GUI confirmation for sensitive actions."""
+        return messagebox.askyesno(title or "Confirm", message or "Allow?",
+                                    parent=self)
+
+    def _register_tools(self):
+        """Register file/app/system tools (each routes through Security)."""
+        def reg(name, desc, func, risk, action, params=None):
+            self.registry.register(Tool(name, desc, func, risk, action,
+                                        params or {}))
+
+        reg("search_files", "Search files/folders by name",
+            lambda q, root=None: file_agent.search_files(self.security, q, root),
+            "safe", "read", {"query": "text to search"})
+        reg("open_path", "Open a file or folder",
+            lambda p: file_agent.open_path(self.security, p),
+            "safe", "read", {"path": "file/folder"})
+        reg("create_file", "Create a new file",
+            lambda p, c="": file_agent.create_file(self.security, p, c),
+            "confirm", "write", {"path": "path", "content": "text"})
+        reg("read_file", "Read a text file",
+            lambda p: file_agent.read_file(self.security, p),
+            "safe", "read", {"path": "file"})
+        reg("edit_file", "Replace text in a file",
+            lambda p, o, n: file_agent.edit_file(self.security, p, o, n),
+            "confirm", "overwrite", {"path": "path", "old": "text", "new": "text"})
+        reg("delete_path", "Delete a file or folder (needs confirmation)",
+            lambda p: file_agent.delete_path(self.security, p),
+            "confirm", "delete", {"path": "path"})
+
+        reg("launch_app", "Launch an application",
+            lambda a, args="": app_agent.launch_app(self.security, a, args),
+            "confirm", "launch", {"app": "name", "args": "optional"})
+        reg("open_folder", "Open a folder in Explorer",
+            lambda p: app_agent.open_folder(self.security, p),
+            "safe", "launch", {"path": "folder"})
+
+        reg("system_status", "Show CPU / RAM / disk usage",
+            lambda: system_monitor.system_status(self.security),
+            "safe", "read", {})
+        reg("list_processes", "List running processes",
+            lambda: system_monitor.list_processes(self.security),
+            "safe", "read", {})
+
+    def _init_voice_optional(self):
+        """Load voice engines only if enabled and deps are available."""
+        v = self.cfg.get("voice", {}) or {}
+        if not v.get("enabled"):
+            return
+        try:
+            from voice.engine import TextToSpeech, SpeechToText
+            self.tts = TextToSpeech(voice_name=v.get("voice_name", ""))
+            self.stt = SpeechToText(model_path=v.get("vosk_model", ""))
+        except Exception as e:  # noqa: BLE001
+            self.tts = None
+            self.stt = None
+            if hasattr(self, "chat"):
+                self._append("system", f"Voice disabled: {e}")
+
+    def emergency_stop(self):
+        """Halt all active tasks and any local servers."""
+        self.security.trigger_emergency_stop()
+        try:
+            if self.coding:
+                self.coding.stop_all()
+        except Exception:  # noqa: BLE001
+            pass
+        self._append("system", "EMERGENCY STOP — all tasks halted.")
+        self._set_status("Emergency stop engaged")
+
+    def reset_emergency(self):
+        self.security.reset_emergency_stop()
+        self._append("system", "Emergency stop cleared. You can continue.")
+        self._set_status("Ready")
+
+    def _toggle_voice(self):
+        """Read one utterance and send it as a chat message (if STT available)."""
+        if not self.stt or not self.stt.available():
+            messagebox.showinfo("Voice",
+                                "Voice input not available. Enable voice in "
+                                "Settings and install Vosk + sounddevice.")
+            return
+        if self.tts and self.tts.available():
+            pass  # TTS is available; replies will be spoken if enabled
+        self._set_status("Listening…")
+
+        def worker():
+            try:
+                for chunk in self.stt.transcribe_stream():
+                    if chunk.get("final") and chunk.get("text"):
+                        self.ui_queue.put(("voice_text", chunk["text"]))
+                        break
+            except Exception as e:  # noqa: BLE001
+                self.ui_queue.put(("error", f"Voice: {e}"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ---- chat rendering ----
     def _append(self, kind, text):
@@ -191,6 +360,11 @@ class JarvisApp(tk.Tk):
         save_config(self.cfg)
         self.engine = AIEngine(self.cfg)
         self.backend_var.set(self.cfg.get("ai_backend"))
+        # Re-init voice from new settings
+        self.tts = None
+        self.stt = None
+        self._init_voice_optional()
+        self.voice_on.set(bool((self.cfg.get("voice", {}) or {}).get("enabled", False)))
         self._append("system", "Settings saved.")
         self.refresh_models()
 
@@ -265,6 +439,10 @@ class JarvisApp(tk.Tk):
                 kind, payload = self.ui_queue.get_nowait()
                 if kind == "token":
                     self._stream(payload)
+                elif kind == "voice_text":
+                    self.entry.delete("1.0", "end")
+                    self.entry.insert("1.0", payload)
+                    self._set_status("Ready")
                 elif kind == "models":
                     self.model_box["values"] = payload
                     if payload and self.model_var.get() not in payload:
@@ -282,6 +460,17 @@ class JarvisApp(tk.Tk):
                     self._set_status("Ready")
                     self.busy = False
                     self.send_btn.configure(state="normal", text="Send")
+                    if self.voice_on.get() and self.tts and self.tts.available():
+                        try:
+                            self.tts.speak(payload)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    # persist turn to memory
+                    try:
+                        self.memory.append_history(self.history[-2])
+                        self.memory.append_history(self.history[-1])
+                    except Exception:  # noqa: BLE001
+                        pass
                 elif kind == "error":
                     self.chat.configure(state="normal")
                     self.chat.insert("end", f"[error: {payload}]\n\n")
@@ -350,6 +539,22 @@ class SettingsDialog(tk.Toplevel):
         tk.Scale(frm, from_=0.0, to=1.5, resolution=0.1, orient="horizontal",
                  variable=self.temp_var, bg=BG, fg=TEXT, troughcolor=PANEL,
                  highlightthickness=0, length=320).grid(row=r + 1, column=0, sticky="we")
+        r += 2
+
+        # Voice settings
+        voice_cfg = cfg.get("voice", {}) or {}
+        self.voice_enabled = tk.BooleanVar(value=bool(voice_cfg.get("enabled", False)))
+        tk.Checkbutton(frm, text="Enable voice (speak replies)", variable=self.voice_enabled,
+                       bg=BG, fg=TEXT, selectcolor=PANEL, activebackground=BG,
+                       activeforeground=TEXT, anchor="w").grid(
+                            row=r, column=0, sticky="w", pady=(6, 0))
+        r += 1
+        tk.Label(frm, text="Vosk model path (for voice input)", bg=BG, fg=ACCENT,
+                 anchor="w", font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
+        self.vosk_var = tk.StringVar(value=str(voice_cfg.get("vosk_model", "")))
+        tk.Entry(frm, textvariable=self.vosk_var, bg=PANEL, fg=TEXT, relief="flat",
+                 width=44).grid(row=r + 1, column=0, sticky="we", pady=(2, 6))
+        r += 2
 
         btns = tk.Frame(frm, bg=BG)
         btns.grid(row=r + 2, column=0, sticky="e", pady=(16, 0))
@@ -364,6 +569,10 @@ class SettingsDialog(tk.Toplevel):
         out["model"] = self.vars["model"].get().strip()
         out["system_prompt"] = self.vars["system_prompt"].get("1.0", "end").strip()
         out["temperature"] = round(float(self.temp_var.get()), 2)
+        voice = dict(out.get("voice", {}) or {})
+        voice["enabled"] = bool(self.voice_enabled.get())
+        voice["vosk_model"] = self.vosk_var.get().strip()
+        out["voice"] = voice
         if out["ai_backend"] == "freellm" and (not out["base_url"] or not out["api_key"]):
             messagebox.showwarning("Settings",
                                    "Base URL and API Key are required for the "

@@ -51,7 +51,41 @@ DEFAULT_CONFIG = {
         "stt_engine": "vosk",   # "vosk" | "whisper"
         "tts_engine": "sapi",   # "sapi" | "espeak"
         "voice_name": "",
+        "vosk_model": "",       # path to a Vosk model folder
+        "wake_word": "jarvis",
+        "language": "en-IN",    # Hinglish support handled in prompts
     },
+
+    # ---- Security (permission + validation layer) ----
+    "security": {
+        # Roots the assistant may read/write within. Workspace & downloads are
+        # added automatically at runtime if blank.
+        "allowed_read_roots": [],
+        "require_confirmation": [
+            "delete", "overwrite", "install",
+            "run_unknown_exe", "shutdown", "system_change",
+        ],
+        "block_run_unknown_exe": True,
+        "max_cmd_timeout": 120,
+    },
+
+    # ---- Browser agent (Playwright, dedicated profile) ----
+    "browser": {
+        "enabled": False,
+        "profile_dir": "",      # dedicated JARVIS profile; never the user's Chrome
+        "headless": False,
+        "download_dir": "",     # confined downloads
+    },
+
+    # ---- Coding agent ----
+    "coding": {
+        "workspace": "",        # dedicated project folder
+        "backup_dir": "",       # change-tracking backups
+    },
+
+    # ---- Tools / agents toggles ----
+    "tools": {"enabled": True},
+    "multiagent": {"enabled": False},
 }
 
 

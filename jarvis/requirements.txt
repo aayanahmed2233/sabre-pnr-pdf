@@ -1,1 +1,11 @@
+# Build-only dependency (turns the app into jarvis.exe). The app itself runs
+# on the Python standard library + Tkinter.
 pyinstaller>=6.0
+
+# ---- OPTIONAL deps for later phases (uncomment as needed) ----
+# Voice (Phase 2): speech-to-text + text-to-speech
+# vosk
+# sounddevice
+# pywin32
+# Browser agent (Phase 4):
+# playwright
