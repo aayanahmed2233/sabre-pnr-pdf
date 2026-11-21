@@ -75,7 +75,7 @@ class BrowserAgent:
                     "try again (the profile is locked while Chrome is open).")
             # High-risk: launching the user's real profile.
             self.security.authorize(
-                "launch", Risk.CONFIRM,
+                "real_browser_launch", Risk.CONFIRM,
                 "Launch YOUR real Chrome profile (logins/cookies)?")
             self._context = self._pw.chromium.launch_persistent_context(
                 udd, headless=self.headless, accept_downloads=True,

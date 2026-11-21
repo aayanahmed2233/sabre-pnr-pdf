@@ -64,7 +64,7 @@ DEFAULT_CONFIG = {
         "require_confirmation": [
             "delete", "overwrite", "install",
             "run_unknown_exe", "shutdown", "system_change",
-            "input_control", "write",
+            "input_control", "write", "real_browser_launch",
         ],
         "block_run_unknown_exe": True,
         "max_cmd_timeout": 120,

@@ -200,6 +200,70 @@ def _read_err(e) -> str:
         return ""
 
 
+def parse_tool_call(text: str):
+    """
+    Detect a tool call in the model's reply.
+
+    Returns (name, args_dict) if the reply is a tool call, else None.
+    Accepts either a raw JSON object or a ```json fenced block, with keys
+    "tool" (or "tool_name"/"name") and "args" (or "parameters").
+    """
+    if not text:
+        return None
+    s = text.strip()
+
+    # Prefer a fenced ```json ... ``` block if present.
+    if "```" in s:
+        parts = s.split("```")
+        for i in range(1, len(parts), 2):
+            block = parts[i].strip()
+            if block.lower().startswith("json"):
+                block = block[4:].strip()
+            cand = _try_parse(block)
+            if cand:
+                return cand
+
+    # Otherwise try the whole string, then first {...} span.
+    cand = _try_parse(s)
+    if cand:
+        return cand
+    start = s.find("{")
+    end = s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return _try_parse(s[start:end + 1])
+    return None
+
+
+def _try_parse(s: str):
+    try:
+        obj = json.loads(s)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    name = obj.get("tool") or obj.get("tool_name") or obj.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    args = obj.get("args")
+    if args is None:
+        args = obj.get("parameters", {}) or {}
+    if not isinstance(args, dict):
+        args = {}
+    return (name, args)
+
+
+def _result_to_text(result) -> str:
+    """Normalize a ToolResult / string / other into text."""
+    if result is None:
+        return "(no output)"
+    # ToolResult-like
+    if hasattr(result, "ok") and hasattr(result, "output"):
+        if getattr(result, "ok"):
+            return str(getattr(result, "output", "") or "(ok)")
+        return f"ERROR: {getattr(result, 'error', '')}"
+    return str(result)
+
+
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
@@ -235,10 +299,12 @@ class AIEngine:
     def list_models(self):
         return self.backend().list_models(self.cfg)
 
-    def build_messages(self, history):
-        """Prepend the system prompt to a chat history."""
+    def build_messages(self, history, tools_spec=None):
+        """Prepend the system prompt (optionally with tool instructions)."""
         msgs = []
-        sp = self.cfg.get("system_prompt")
+        sp = self.cfg.get("system_prompt") or ""
+        if tools_spec:
+            sp = (sp + "\n\n" + tools_spec).strip()
         if sp:
             msgs.append({"role": "system", "content": sp})
         msgs.extend(history)
@@ -248,3 +314,46 @@ class AIEngine:
         """Stream a reply. `history` is a list of {'role','content'} dicts."""
         return self.backend().chat(
             self.cfg, self.build_messages(history), on_token=on_token)
+
+    def chat_with_tools(self, history, tools_spec=None, tool_runner=None,
+                        on_tool=None, max_steps=6):
+        """
+        Tool-calling loop.
+
+        1. Ask the model (non-streaming) for a reply.
+        2. If the reply is a tool call, execute it via tool_runner(name, args)
+           and feed the result back; repeat (up to max_steps).
+        3. Otherwise return the final natural-language answer.
+
+        on_tool(name, args, result) is called for each executed tool so the UI
+        can show progress. tool_runner must return a string (or ToolResult).
+        """
+        if not tool_runner:
+            # No tools wired: behave like a plain chat.
+            return self.chat(history)
+
+        convo = self.build_messages(history, tools_spec=tools_spec)
+        for _step in range(max_steps):
+            self.backend  # ensure selected
+            reply = self.backend().chat(self.cfg, list(convo))  # non-stream
+            call = parse_tool_call(reply)
+            if not call:
+                return reply
+            name, args = call
+            # record the model's tool call
+            convo.append({"role": "assistant", "content": reply})
+            try:
+                result = tool_runner(name, args)
+            except Exception as e:  # noqa: BLE001
+                result = f"TOOL ERROR: {e}"
+            result_str = _result_to_text(result)
+            if on_tool:
+                try:
+                    on_tool(name, args, result_str)
+                except Exception:  # noqa: BLE001
+                    pass
+            convo.append({
+                "role": "user",
+                "content": f"TOOL RESULT ({name}):\n{result_str}",
+            })
+        return "(Reached the maximum number of tool steps.)"

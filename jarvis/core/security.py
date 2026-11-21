@@ -40,6 +40,7 @@ CONFIRM_LABELS = {
     "system_change": "Change a system setting?",
     "write": "Create or modify a file?",
     "launch": "Launch an application?",
+    "real_browser_launch": "Launch your real Chrome profile (logins/cookies)?",
     "download": "Download a file from the internet?",
 }
 

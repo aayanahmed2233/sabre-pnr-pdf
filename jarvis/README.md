@@ -34,6 +34,7 @@ No third-party packages are needed to run the core app (stdlib + Tkinter only).
 python selftest_phase1.py      # AI engine, config, message building (no network)
 python selftest_phase1.py --live "https://your-api" "KEY" "model-id"   # one live call
 python selftest_phase2.py      # security, tools, file/coding agents, memory, emergency stop
+python selftest_tools.py       # tool-calling loop (fake model, no network)
 ```
 
 Paste the PASS/FAIL lines back so features get marked done.

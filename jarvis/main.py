@@ -244,6 +244,8 @@ class JarvisApp(tk.Tk):
                              font=("Segoe UI", 10, "italic"))
         self.chat.tag_config("body", foreground=C["text"],
                              font=("Segoe UI", 11))
+        self.chat.tag_config("tool", foreground=C["accent2"],
+                             font=("Segoe UI", 9, "italic"))
 
         # ---- Input row ----
         row = tk.Frame(self, bg=BG)
@@ -361,30 +363,32 @@ class JarvisApp(tk.Tk):
             self.registry.register(Tool(name, desc, func, risk, action,
                                         params or {}))
 
+        # NOTE: lambda parameter names MUST match the param names declared below,
+        # so tool-calling can pass them by keyword.
         reg("search_files", "Search files/folders by name",
-            lambda q, root=None: file_agent.search_files(self.security, q, root),
+            lambda query, root=None: file_agent.search_files(self.security, query, root),
             "safe", "read", {"query": "text"})
         reg("open_path", "Open a file or folder",
-            lambda p: file_agent.open_path(self.security, p),
+            lambda path: file_agent.open_path(self.security, path),
             "safe", "read", {"path": "file/folder"})
         reg("create_file", "Create a new file",
-            lambda p, c="": file_agent.create_file(self.security, p, c),
+            lambda path, content="": file_agent.create_file(self.security, path, content),
             "confirm", "write", {"path": "path", "content": "text"})
         reg("read_file", "Read a text file",
-            lambda p: file_agent.read_file(self.security, p),
+            lambda path: file_agent.read_file(self.security, path),
             "safe", "read", {"path": "file"})
         reg("edit_file", "Replace text in a file",
-            lambda p, o, n: file_agent.edit_file(self.security, p, o, n),
+            lambda path, old, new: file_agent.edit_file(self.security, path, old, new),
             "confirm", "overwrite", {"path": "path", "old": "text", "new": "text"})
         reg("delete_path", "Delete a file or folder (needs confirmation)",
-            lambda p: file_agent.delete_path(self.security, p),
+            lambda path: file_agent.delete_path(self.security, path),
             "confirm", "delete", {"path": "path"})
 
         reg("launch_app", "Launch an application",
-            lambda a, args="": app_agent.launch_app(self.security, a, args),
+            lambda app, args="": app_agent.launch_app(self.security, app, args),
             "confirm", "launch", {"app": "name", "args": "optional"})
         reg("open_folder", "Open a folder in Explorer",
-            lambda p: app_agent.open_folder(self.security, p),
+            lambda path: app_agent.open_folder(self.security, path),
             "safe", "launch", {"path": "folder"})
 
         reg("system_status", "Show CPU / RAM / disk usage",
@@ -394,20 +398,6 @@ class JarvisApp(tk.Tk):
             lambda: system_monitor.list_processes(self.security),
             "safe", "read", {})
 
-        # browser agent (Playwright)
-        reg("browser_open", "Open a URL in the browser",
-            lambda u: self._browser_call("goto", u),
-            "confirm", "launch", {"url": "url"})
-        reg("browser_search", "Google search; return top results",
-            lambda q: self._browser_call("search", q),
-            "confirm", "launch", {"query": "text"})
-        reg("browser_summarize", "Fetch a page's text for summarization",
-            lambda u: self._browser_call("summarize", u),
-            "confirm", "launch", {"url": "url"})
-        reg("browser_download", "Download a file to the approved folder",
-            lambda u, f="": self._browser_call("download", u, f),
-            "confirm", "download", {"url": "url", "filename": "optional"})
-
         # keyboard / mouse
         reg("mouse_move", "Move the mouse",
             lambda x, y: keyboard_mouse.move_mouse(self.security, x, y),
@@ -416,10 +406,10 @@ class JarvisApp(tk.Tk):
             lambda x=None, y=None: keyboard_mouse.click(self.security, x, y),
             "confirm", "input_control", {"x": "x", "y": "y"})
         reg("type_text", "Type text via keyboard",
-            lambda t: keyboard_mouse.type_text(self.security, t),
+            lambda text: keyboard_mouse.type_text(self.security, text),
             "confirm", "input_control", {"text": "text"})
         reg("press_key", "Press a key",
-            lambda k: keyboard_mouse.press_key(self.security, k),
+            lambda key: keyboard_mouse.press_key(self.security, key),
             "confirm", "input_control", {"key": "key name"})
 
         # screen reader
@@ -432,6 +422,20 @@ class JarvisApp(tk.Tk):
         reg("ocr_screen", "OCR the screen (needs Tesseract)",
             lambda: screen_reader.ocr_screen(self.security),
             "confirm", "write", {})
+
+        # browser agent (Playwright)
+        reg("browser_open", "Open a URL in the browser",
+            lambda url: self._browser_call("goto", url),
+            "confirm", "launch", {"url": "url"})
+        reg("browser_search", "Google search; return top results",
+            lambda query: self._browser_call("search", query),
+            "confirm", "launch", {"query": "text"})
+        reg("browser_summarize", "Fetch a page's text for summarization",
+            lambda url: self._browser_call("summarize", url),
+            "confirm", "launch", {"url": "url"})
+        reg("browser_download", "Download a file to the approved folder",
+            lambda url, filename="": self._browser_call("download", url, filename),
+            "confirm", "download", {"url": "url", "filename": "optional"})
 
     def _init_voice_optional(self):
         v = self.cfg.get("voice", {}) or {}
@@ -454,6 +458,29 @@ class JarvisApp(tk.Tk):
             return getattr(self.browser, fn)(*args, **kwargs)
         except Exception as e:  # noqa: BLE001
             return f"Browser error: {e}"
+
+    def _build_tools_spec(self) -> str:
+        """Describe available tools so the model knows how to call them."""
+        lines = [
+            "You have access to tools. When you need to use one, reply with "
+            "ONLY a JSON object and nothing else, in this exact format:",
+            '{"tool": "<tool_name>", "args": {<param>: <value>}}',
+            "After a tool result is provided, continue and answer the user "
+            "normally in a friendly way. Do not mention the JSON.",
+            "Available tools:",
+        ]
+        for t in self.registry.describe():
+            params = ", ".join(t.get("params", {}).keys())
+            lines.append(f"- {t['name']}({params}): {t['description']}")
+        return "\n".join(lines)
+
+    def _run_tool(self, name, args):
+        """Execute a tool by name through the Security-gated registry."""
+        try:
+            return self.registry.run(name, **(args or {}))
+        except Exception as e:  # noqa: BLE001
+            from tools.registry import ToolResult
+            return ToolResult(False, error=str(e))
 
     def emergency_stop(self):
         self.security.trigger_emergency_stop()
@@ -638,13 +665,17 @@ class JarvisApp(tk.Tk):
         self._start_thinking()
         self._begin_bot()
 
-        def on_token(piece):
-            self.ui_queue.put(("token", piece))
+        tools_spec = self._build_tools_spec()
+
+        def on_tool(name, args, result):
+            self.ui_queue.put(("tool", (name, args, result)))
 
         def worker():
             try:
-                full = self.engine.chat(self.history, on_token=on_token)
-                self.ui_queue.put(("done", full or "(empty response)"))
+                full = self.engine.chat_with_tools(
+                    self.history, tools_spec=tools_spec,
+                    tool_runner=self._run_tool, on_tool=on_tool)
+                self.ui_queue.put(("final", full or "(empty response)"))
             except AIError as e:
                 self.ui_queue.put(("error", str(e)))
             except Exception as e:  # noqa: BLE001
@@ -655,12 +686,59 @@ class JarvisApp(tk.Tk):
     # =====================================================================
     # Queue pump
     # =====================================================================
+    def _reveal_final(self, text):
+        """Reveal the final answer with a typewriter effect, then finish."""
+        self.chat.configure(state="normal")
+        state = {"i": 0}
+        chunk = 6
+
+        def step():
+            i = state["i"]
+            if i >= len(text):
+                self.chat.insert("end", "\n\n")
+                self.chat.configure(state="disabled")
+                self._finish_reply(text)
+                return
+            self.chat.insert("end", text[i:i + chunk], "body")
+            self.chat.see("end")
+            state["i"] += chunk
+            self.after(10, step)
+
+        step()
+
+    def _finish_reply(self, text):
+        self.history.append({"role": "assistant", "content": text})
+        self._stop_thinking()
+        self._set_status("Ready", C["ok"])
+        self.busy = False
+        try:
+            self.send_btn.configure(state="normal")
+        except tk.TclError:
+            pass
+        if self.voice_on.get() and self.tts and self.tts.available():
+            try:
+                self.tts.speak(text)
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            self.memory.append_history(self.history[-2])
+            self.memory.append_history(self.history[-1])
+        except Exception:  # noqa: BLE001
+            pass
+
     def _poll_queue(self):
         try:
             while True:
                 kind, payload = self.ui_queue.get_nowait()
                 if kind == "token":
                     self._stream(payload)
+                elif kind == "tool":
+                    name, args, result = payload
+                    self.chat.configure(state="normal")
+                    self.chat.insert("end", f"🔧 {name}({args}) → {result[:300]}\n",
+                                     "tool")
+                    self.chat.see("end")
+                    self.chat.configure(state="disabled")
                 elif kind == "voice_text":
                     self.entry.delete("1.0", "end")
                     self.entry.insert("1.0", payload)
@@ -675,24 +753,9 @@ class JarvisApp(tk.Tk):
                     self.busy = False
                     self.send_btn.configure(state="normal")
                 elif kind == "done":
-                    self.history.append({"role": "assistant", "content": payload})
-                    self.chat.configure(state="normal")
-                    self.chat.insert("end", "\n\n")
-                    self.chat.configure(state="disabled")
-                    self._stop_thinking()
-                    self._set_status("Ready", C["ok"])
-                    self.busy = False
-                    self.send_btn.configure(state="normal")
-                    if self.voice_on.get() and self.tts and self.tts.available():
-                        try:
-                            self.tts.speak(payload)
-                        except Exception:  # noqa: BLE001
-                            pass
-                    try:
-                        self.memory.append_history(self.history[-2])
-                        self.memory.append_history(self.history[-1])
-                    except Exception:  # noqa: BLE001
-                        pass
+                    self._finish_reply(payload)
+                elif kind == "final":
+                    self._reveal_final(payload)
                 elif kind == "error":
                     self.chat.configure(state="normal")
                     self.chat.insert("end", f"[error: {payload}]\n\n")
