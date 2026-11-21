@@ -44,15 +44,21 @@ Paste the PASS/FAIL lines back so features get marked done.
 
 | # | Phase | Status | Notes |
 |---|---|---|---|
-| 1 | Desktop foundation (UI, chat, FreeLLMAPI brain, model loading/status, settings) | ✅ | Core chat + models + settings done |
+| 1 | Desktop foundation (UI, chat, FreeLLMAPI brain, model loading/status, settings) | ✅ | Animated HD UI + live chat + models + settings |
 | 2 | Voice (mic, STT, TTS, Hinglish, wake word/interrupt) | 🔌 | Vosk STT + SAPI TTS wired; needs `vosk`, `sounddevice`, `pywin32` + a Vosk model; wake word later |
-| 3 | Windows control (file/folder search, open apps, kbd/mouse, system monitor) | ✅ partial | File/app/system tools built & gated; keyboard/mouse automation still to add |
+| 3 | Windows control (file/folder search, open apps, **keyboard/mouse**, system monitor, **screen reader**) | ✅ partial | File/app/system/input/OCR tools built & gated; OCR needs Tesseract |
 | 4 | Chrome agent (launch, research, navigate, download, summarize) | 🔌 | Playwright module built; needs `playwright install chromium`; dedicated profile only |
 | 5 | Coding agent (site dev, edit, projects, debug, terminal, web test) | ✅ | Workspace + backups + terminal + local server; gated |
 | 6 | Memory (history, project, prefs, task recovery) | ✅ | Local JSON memory; history auto-saved |
 | 7 | Multi-agent (researcher/developer/tester/file manager/coordinator) | ✅ | Deterministic coordinator; can wire to LLM later |
 | 8 | Final build (optimize, bugfix, offline test, PyInstaller EXE, installer/docs) | ⏳ | Build scripts present; final pass later |
 | — | Security layer (permission tiers + Emergency Stop) | ✅ | All tools route through `core/security.py` |
+
+### UI highlights
+- Animated **arc-reactor** (spins faster + pulses while "thinking").
+- **Splash animation** on launch (fades in/out).
+- **Hover effects** on all buttons, cyan-accent dark theme, card-style chat.
+- **Status dot** (green ready / cyan thinking / red error).
 
 ### Security permission map (as implemented)
 

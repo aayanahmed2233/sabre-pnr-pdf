@@ -20,6 +20,10 @@ python -m pip install --upgrade pip
 python -m pip install vosk sounddevice pywin32
 echo.
 
+echo Installing input + screen-reading libraries (pyautogui, pytesseract, pillow)...
+python -m pip install pyautogui pytesseract pillow
+echo.
+
 echo Installing Playwright (browser agent)...
 python -m pip install playwright
 python -m playwright install chromium
@@ -27,9 +31,11 @@ echo.
 
 echo === Done ===
 echo.
-echo Next: download a Vosk speech model from:
-echo   https://alphacephei.com/vosk/models
-echo (e.g. vosk-model-small-en-us-0.15, ~40 MB)
-echo Extract it, then in JARVIS Settings paste its folder path into
-echo "Vosk model path" and tick "Enable voice".
+echo Notes:
+echo  - Voice input (STT): download a Vosk model from
+echo      https://alphacephei.com/vosk/models
+echo    (e.g. vosk-model-small-en-us-0.15). Extract it and paste its path in
+echo    Settings -^> "Vosk model path", then tick "Enable voice".
+echo  - OCR (screen reading) also needs the Tesseract engine installed:
+echo      https://github.com/UB-Mannheim/tesseract/wiki
 pause

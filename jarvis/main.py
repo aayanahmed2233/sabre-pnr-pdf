@@ -2,50 +2,42 @@
 """
 JARVIS - desktop AI assistant (Windows).
 
-Phase 1: FreeLLMAPI cloud brain (primary) via a modular AI engine.
-  - Set Base URL + API Key in Settings.
-  - Models are fetched from the provider and selectable.
-  - Replies stream live.
+Animated, HD-style UI + modular backend:
+  - Brain: FreeLLMAPI (cloud, primary) with live streaming; local stub for later.
+  - Security layer: every tool/action passes the permission gate.
+  - Tools: file, app, system, keyboard/mouse, screen reader.
+  - Coding agent, memory, multi-agent, voice (optional).
 
-Voice, Windows control, browser, coding agent, local brain = later phases.
-Runs on the Python standard library only (plus Tkinter from the Windows
-Python installer). No third-party packages needed to RUN.
+Runs on the Python standard library only (plus Tkinter). No third-party
+packages needed to RUN the core app.
 """
 
 import os
 import queue
-import sys
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 
 from core.config import load_config, save_config, app_dir
-from core.security import Security, SecurityError
+from core.security import Security
 from ai.engine import AIEngine, AIError
 from tools.registry import ToolRegistry, Tool
-from tools import file_agent, app_agent, system_monitor
+from tools import (file_agent, app_agent, system_monitor,
+                   keyboard_mouse, screen_reader)
 from memory.store import Memory
+from ui.widgets import ArcReactor, hoverify, palette
 
-# Optional agents (may be disabled via config / missing deps)
-_BROWSER_OK = True
-_CODING_OK = True
+# Optional agents (disabled gracefully if deps missing)
 try:
     from agents.coding_agent import CodingAgent
     from agents.browser_agent import BrowserAgent
 except Exception:  # noqa: BLE001
-    _CODING_OK = _BROWSER_OK = False
+    CodingAgent = None
+    BrowserAgent = None
 
-# ----------------------------------------------------------------------------
-# Theme
-# ----------------------------------------------------------------------------
-BG = "#0a0e14"
-PANEL = "#111722"
-ACCENT = "#22d3ee"
-ACCENT_DIM = "#0e7490"
-TEXT = "#e5eefc"
-MUTED = "#7b8aa6"
-USER_COLOR = "#7dd3fc"
-BOT_COLOR = "#22d3ee"
+C = palette
+BG = C["bg"]
+PANEL = C["panel"]
 
 
 class JarvisApp(tk.Tk):
@@ -53,7 +45,7 @@ class JarvisApp(tk.Tk):
         super().__init__()
         self.cfg = load_config()
         self.engine = AIEngine(self.cfg)
-        self.history = []            # [{'role','content'}]
+        self.history = []
         self.ui_queue = queue.Queue()
         self.busy = False
 
@@ -61,7 +53,6 @@ class JarvisApp(tk.Tk):
         base = app_dir()
         self.security = Security.from_config(self.cfg)
         self.security.confirm_callback = self._confirm_prompt
-        # Default roots: app dir (read) + a dedicated workspace + downloads
         self.workspace_dir = self.cfg.get("coding", {}).get("workspace") or \
             os.path.join(base, "workspace")
         self.download_dir = self.cfg.get("browser", {}).get("download_dir") or \
@@ -80,9 +71,8 @@ class JarvisApp(tk.Tk):
         self.registry = ToolRegistry(self.security, {"cfg": self.cfg})
         self._register_tools()
 
-        # Memory (local)
+        # Memory + restore history
         self.memory = Memory(os.path.join(base, "memory"))
-        # Restore previous conversation if present
         try:
             prev = self.memory.load_history()
             if prev:
@@ -90,24 +80,25 @@ class JarvisApp(tk.Tk):
         except Exception:  # noqa: BLE001
             pass
 
-        # Coding agent (optional)
+        # Coding agent
         self.coding = None
-        if _CODING_OK:
+        if CodingAgent is not None:
             try:
                 self.coding = CodingAgent(self.security, self.workspace_dir,
                                           self.backup_dir)
             except Exception:  # noqa: BLE001
                 self.coding = None
 
-        # Voice (optional; only if enabled + deps present)
+        # Voice (optional)
         self.tts = None
         self.stt = None
         self.voice_on = tk.BooleanVar(value=False)
         self._init_voice_optional()
 
+        # ---- window ----
         self.title("J.A.R.V.I.S")
-        self.geometry("880x700")
-        self.minsize(640, 480)
+        self.geometry("940x740")
+        self.minsize(680, 520)
         self.configure(bg=BG)
 
         self._build_style()
@@ -119,108 +110,242 @@ class JarvisApp(tk.Tk):
                      f" Tools: {len(self.registry.names())}.")
 
         if not self.engine.is_ready():
-            self.after(300, self.open_settings)
+            self.after(1500, self.open_settings)
 
-    # ---- styling ----
+        self.after(60, self._show_splash)
+
+    # =====================================================================
+    # UI construction
+    # =====================================================================
     def _build_style(self):
         style = ttk.Style(self)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("TCombobox", fieldbackground=PANEL, background=PANEL,
-                        foreground=TEXT, arrowcolor=ACCENT)
-        style.configure("TButton", background=PANEL, foreground=TEXT,
-                        bordercolor=ACCENT_DIM)
-        style.map("TButton", background=[("active", ACCENT_DIM)])
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background=PANEL, foreground=TEXT,
-                        padding=(12, 6))
-        style.map("TNotebook.Tab", background=[("selected", ACCENT_DIM)])
+        style.configure("TCombobox", fieldbackground=C["panel"],
+                        background=C["panel"], foreground=C["text"],
+                        arrowcolor=C["accent"], bordercolor=C["border"],
+                        lightcolor=C["panel"], darkcolor=C["panel"])
+        style.map("TCombobox", fieldbackground=[("readonly", C["panel"])],
+                  foreground=[("readonly", C["text"])])
+
+    def _mkbutton(self, parent, text, command, kind="normal"):
+        if kind == "primary":
+            b = tk.Button(parent, text=text, command=command, bg=C["accent"],
+                          fg=C["bg"], relief="flat", bd=0, cursor="hand2",
+                          activebackground=C["accent2"], activeforeground=C["bg"],
+                          font=("Segoe UI", 10, "bold"), padx=16, pady=7)
+            hoverify(b, C["accent"], C["accent2"])
+        elif kind == "danger":
+            b = tk.Button(parent, text=text, command=command, bg=C["danger"],
+                          fg="white", relief="flat", bd=0, cursor="hand2",
+                          activebackground=C["danger_hi"],
+                          font=("Segoe UI", 9, "bold"), padx=12, pady=7)
+            hoverify(b, C["danger"], C["danger_hi"])
+        else:
+            b = tk.Button(parent, text=text, command=command, bg=C["panel"],
+                          fg=C["text"], relief="flat", bd=0, cursor="hand2",
+                          activebackground=C["panel2"], activeforeground=C["text"],
+                          font=("Segoe UI", 9), padx=12, pady=7)
+            hoverify(b, C["panel"], C["dim"])
+        return b
 
     def _build_ui(self):
+        # ---- Header ----
         header = tk.Frame(self, bg=BG)
-        header.pack(fill="x", padx=16, pady=(14, 6))
-        tk.Label(header, text="J.A.R.V.I.S", bg=BG, fg=ACCENT,
-                 font=("Segoe UI", 20, "bold")).pack(side="left")
+        header.pack(fill="x", padx=20, pady=(16, 6))
+
+        self.reactor = ArcReactor(header, size=72, bg=BG)
+        self.reactor.pack(side="left", padx=(0, 16))
+
+        tb = tk.Frame(header, bg=BG)
+        tb.pack(side="left")
+        tk.Label(tb, text="J.A.R.V.I.S", bg=BG, fg=C["accent"],
+                 font=("Segoe UI", 22, "bold")).pack(anchor="w")
+        tk.Label(tb, text="AI Assistant", bg=BG, fg=C["muted"],
+                 font=("Segoe UI", 9)).pack(anchor="w")
+
+        right = tk.Frame(header, bg=BG)
+        right.pack(side="right", fill="y")
+        self.status_dot = tk.Label(right, text="●", bg=BG, fg=C["ok"],
+                                   font=("Segoe UI", 12))
+        self.status_dot.pack(side="right")
         self.status_var = tk.StringVar(value="Ready")
-        tk.Label(header, textvariable=self.status_var, bg=BG, fg=MUTED,
-                 font=("Segoe UI", 9)).pack(side="right")
+        tk.Label(right, textvariable=self.status_var, bg=BG, fg=C["muted"],
+                 font=("Segoe UI", 10)).pack(side="right", padx=(0, 8))
 
-        bar = tk.Frame(self, bg=PANEL)
-        bar.pack(fill="x", padx=16, pady=6)
+        # accent separator
+        tk.Frame(self, bg=C["dim"], height=2).pack(fill="x", padx=20)
 
-        tk.Label(bar, text="Brain", bg=PANEL, fg=MUTED,
+        # ---- Control bar ----
+        bar = tk.Frame(self, bg=C["bg2"])
+        bar.pack(fill="x", padx=20, pady=10)
+
+        tk.Label(bar, text="Brain", bg=C["bg2"], fg=C["muted"],
                  font=("Segoe UI", 9)).pack(side="left", padx=(10, 4))
         self.backend_var = tk.StringVar(value=self.cfg.get("ai_backend", "freellm"))
-        self.backend_box = ttk.Combobox(
-            bar, textvariable=self.backend_var, state="readonly", width=10,
-            values=["freellm", "local"])
+        self.backend_box = ttk.Combobox(bar, textvariable=self.backend_var,
+                                        state="readonly", width=9,
+                                        values=["freellm", "local"])
         self.backend_box.pack(side="left", padx=4)
         self.backend_box.bind("<<ComboboxSelected>>", self._on_backend_pick)
 
-        tk.Label(bar, text="Model", bg=PANEL, fg=MUTED,
-                 font=("Segoe UI", 9)).pack(side="left", padx=(12, 4))
+        tk.Label(bar, text="Model", bg=C["bg2"], fg=C["muted"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=(14, 4))
         self.model_var = tk.StringVar(value=self.cfg.get("model", ""))
         self.model_box = ttk.Combobox(bar, textvariable=self.model_var,
-                                      state="readonly", width=34)
+                                      state="readonly", width=32)
         self.model_box.pack(side="left", padx=4)
         self.model_box.bind("<<ComboboxSelected>>", self._on_model_pick)
 
-        ttk.Button(bar, text="Refresh models",
-                   command=self.refresh_models).pack(side="left", padx=6)
-        ttk.Button(bar, text="Voice", command=self._toggle_voice).pack(side="left", padx=6)
+        self._mkbutton(bar, "Refresh", self.refresh_models).pack(side="left", padx=4)
+        self._mkbutton(bar, "Voice", self._toggle_voice).pack(side="left", padx=4)
+        self._mkbutton(bar, "Settings", self.open_settings).pack(side="left", padx=4)
 
-        # Emergency Stop (always visible, red)
-        self.stop_btn = tk.Button(bar, text="EMERGENCY STOP", command=self.emergency_stop,
-                                  bg="#7f1d1d", fg="white", relief="flat",
-                                  font=("Segoe UI", 9, "bold"), padx=10, cursor="hand2")
-        self.stop_btn.pack(side="right", padx=6)
-        ttk.Button(bar, text="Clear chat",
-                   command=self.clear_chat).pack(side="right", padx=6)
-        ttk.Button(bar, text="Settings",
-                   command=self.open_settings).pack(side="right", padx=6)
+        # Emergency stop (right, red)
+        self.stop_btn = self._mkbutton(bar, "⏹ EMERGENCY STOP",
+                                        self.emergency_stop, "danger")
+        self.stop_btn.pack(side="right", padx=4)
+        self._mkbutton(bar, "Clear", self.clear_chat).pack(side="right", padx=4)
 
+        # ---- Chat card ----
+        card = tk.Frame(self, bg=C["bg2"], highlightthickness=1,
+                        highlightbackground=C["border"])
+        card.pack(fill="both", expand=True, padx=20, pady=8)
         self.chat = scrolledtext.ScrolledText(
-            self, bg=BG, fg=TEXT, wrap="word", bd=0, padx=14, pady=12,
-            font=("Segoe UI", 11), insertbackground=ACCENT,
-            state="disabled", relief="flat")
-        self.chat.pack(fill="both", expand=True, padx=16, pady=8)
-        self.chat.tag_config("user", foreground=USER_COLOR,
+            card, bg=C["bg2"], fg=C["text"], wrap="word", bd=0, padx=14, pady=12,
+            font=("Segoe UI", 11), insertbackground=C["accent"],
+            state="disabled", relief="flat", selectbackground=C["dim"])
+        self.chat.pack(fill="both", expand=True, padx=2, pady=2)
+        self.chat.tag_config("user", foreground=C["user"],
                              font=("Segoe UI", 11, "bold"))
-        self.chat.tag_config("bot", foreground=BOT_COLOR,
+        self.chat.tag_config("bot", foreground=C["bot"],
                              font=("Segoe UI", 11, "bold"))
-        self.chat.tag_config("system", foreground=MUTED,
+        self.chat.tag_config("system", foreground=C["muted"],
                              font=("Segoe UI", 10, "italic"))
-        self.chat.tag_config("body", foreground=TEXT,
+        self.chat.tag_config("body", foreground=C["text"],
                              font=("Segoe UI", 11))
 
+        # ---- Input row ----
         row = tk.Frame(self, bg=BG)
-        row.pack(fill="x", padx=16, pady=(0, 14))
+        row.pack(fill="x", padx=20, pady=(0, 16))
+        inp = tk.Frame(row, bg=C["panel"], highlightthickness=1,
+                       highlightbackground=C["border"])
+        inp.pack(side="left", fill="both", expand=True)
         self.entry = scrolledtext.ScrolledText(
-            row, height=3, bg=PANEL, fg=TEXT, wrap="word", bd=0,
-            font=("Segoe UI", 11), insertbackground=ACCENT, relief="flat",
-            padx=10, pady=8)
-        self.entry.pack(side="left", fill="both", expand=True)
+            inp, height=2, bg=C["panel"], fg=C["text"], wrap="word", bd=0,
+            font=("Segoe UI", 11), insertbackground=C["accent"], relief="flat",
+            padx=12, pady=10, selectbackground=C["dim"])
+        self.entry.pack(fill="both", expand=True)
         self.entry.bind("<Return>", self._on_enter)
-        self.send_btn = ttk.Button(row, text="Send", command=self.send_message)
+        self.entry.bind("<Shift-Return>", lambda e: None)
+
+        self.send_btn = self._mkbutton(row, "Send  ➤", self.send_message, "primary")
         self.send_btn.pack(side="left", padx=(10, 0), fill="y")
 
-    # ---- foundation: security, tools, voice ----
+    # =====================================================================
+    # Splash animation
+    # =====================================================================
+    def _show_splash(self):
+        try:
+            self.withdraw()
+        except tk.TclError:
+            return
+        sp = tk.Toplevel(self)
+        sp.overrideredirect(True)
+        W, H = 440, 260
+        x = (sp.winfo_screenwidth() - W) // 2
+        y = (sp.winfo_screenheight() - H) // 2
+        sp.geometry(f"{W}x{H}+{x}+{y}")
+        sp.configure(bg=BG)
+        reactor = ArcReactor(sp, size=120, bg=BG)
+        reactor.pack(pady=(30, 10))
+        tk.Label(sp, text="J.A.R.V.I.S", bg=BG, fg=C["accent"],
+                 font=("Segoe UI", 20, "bold")).pack()
+        tk.Label(sp, text="Initializing systems", bg=BG, fg=C["muted"],
+                 font=("Segoe UI", 9)).pack(pady=(2, 0))
+
+        bar = tk.Frame(sp, bg=C["panel"], height=6, width=260)
+        bar.pack(pady=16)
+        bar.pack_propagate(False)
+        fill = tk.Frame(bar, bg=C["accent"], height=6, width=0)
+        fill.pack(side="left")
+
+        try:
+            sp.wm_attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
+
+        state = {"i": 0}
+
+        def step():
+            state["i"] += 1
+            i = state["i"]
+            if i <= 12:
+                a = i / 12.0
+            elif i <= 26:
+                a = 1.0
+            else:
+                a = max(0.0, (40 - i) / 14.0)
+            try:
+                sp.wm_attributes("-alpha", a)
+            except tk.TclError:
+                pass
+            try:
+                fill.configure(width=int(260 * min(1.0, i / 24.0)))
+            except tk.TclError:
+                pass
+            if i >= 42:
+                try:
+                    reactor.destroy()
+                    sp.destroy()
+                except tk.TclError:
+                    pass
+                try:
+                    self.deiconify()
+                except tk.TclError:
+                    pass
+                return
+            sp.after(25, step)
+
+        sp.after(25, step)
+
+    # =====================================================================
+    # Thinking animation
+    # =====================================================================
+    def _start_thinking(self):
+        self.reactor.set_active(True)
+        self._think_frame = 0
+        self._animate_thinking()
+
+    def _animate_thinking(self):
+        if not self.busy:
+            return
+        frames = ["Thinking", "Thinking.", "Thinking..", "Thinking..."]
+        self.status_var.set(frames[self._think_frame % 4])
+        self.status_dot.configure(fg=C["accent"])
+        self._think_frame += 1
+        self.after(360, self._animate_thinking)
+
+    def _stop_thinking(self):
+        self.reactor.set_active(False)
+
+    # =====================================================================
+    # Foundation: security, tools, voice
+    # =====================================================================
     def _confirm_prompt(self, title, message) -> bool:
-        """GUI confirmation for sensitive actions."""
         return messagebox.askyesno(title or "Confirm", message or "Allow?",
                                     parent=self)
 
     def _register_tools(self):
-        """Register file/app/system tools (each routes through Security)."""
         def reg(name, desc, func, risk, action, params=None):
             self.registry.register(Tool(name, desc, func, risk, action,
                                         params or {}))
 
         reg("search_files", "Search files/folders by name",
             lambda q, root=None: file_agent.search_files(self.security, q, root),
-            "safe", "read", {"query": "text to search"})
+            "safe", "read", {"query": "text"})
         reg("open_path", "Open a file or folder",
             lambda p: file_agent.open_path(self.security, p),
             "safe", "read", {"path": "file/folder"})
@@ -251,8 +376,32 @@ class JarvisApp(tk.Tk):
             lambda: system_monitor.list_processes(self.security),
             "safe", "read", {})
 
+        # keyboard / mouse
+        reg("mouse_move", "Move the mouse",
+            lambda x, y: keyboard_mouse.move_mouse(self.security, x, y),
+            "confirm", "input_control", {"x": "x", "y": "y"})
+        reg("mouse_click", "Click the mouse",
+            lambda x=None, y=None: keyboard_mouse.click(self.security, x, y),
+            "confirm", "input_control", {"x": "x", "y": "y"})
+        reg("type_text", "Type text via keyboard",
+            lambda t: keyboard_mouse.type_text(self.security, t),
+            "confirm", "input_control", {"text": "text"})
+        reg("press_key", "Press a key",
+            lambda k: keyboard_mouse.press_key(self.security, k),
+            "confirm", "input_control", {"key": "key name"})
+
+        # screen reader
+        reg("list_windows", "List open windows",
+            lambda: screen_reader.list_windows(self.security),
+            "safe", "read", {})
+        reg("read_active_window", "Read the active window title",
+            lambda: screen_reader.read_active_window(self.security),
+            "safe", "read", {})
+        reg("ocr_screen", "OCR the screen (needs Tesseract)",
+            lambda: screen_reader.ocr_screen(self.security),
+            "confirm", "write", {})
+
     def _init_voice_optional(self):
-        """Load voice engines only if enabled and deps are available."""
         v = self.cfg.get("voice", {}) or {}
         if not v.get("enabled"):
             return
@@ -260,38 +409,39 @@ class JarvisApp(tk.Tk):
             from voice.engine import TextToSpeech, SpeechToText
             self.tts = TextToSpeech(voice_name=v.get("voice_name", ""))
             self.stt = SpeechToText(model_path=v.get("vosk_model", ""))
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             self.tts = None
             self.stt = None
-            if hasattr(self, "chat"):
-                self._append("system", f"Voice disabled: {e}")
 
     def emergency_stop(self):
-        """Halt all active tasks and any local servers."""
         self.security.trigger_emergency_stop()
         try:
             if self.coding:
                 self.coding.stop_all()
         except Exception:  # noqa: BLE001
             pass
+        # Reset UI so the user isn't stuck
+        self.busy = False
+        self._stop_thinking()
+        try:
+            self.send_btn.configure(state="normal")
+        except tk.TclError:
+            pass
         self._append("system", "EMERGENCY STOP — all tasks halted.")
-        self._set_status("Emergency stop engaged")
+        self._set_status("Emergency stop engaged", C["danger"])
 
     def reset_emergency(self):
         self.security.reset_emergency_stop()
         self._append("system", "Emergency stop cleared. You can continue.")
-        self._set_status("Ready")
+        self._set_status("Ready", C["ok"])
 
     def _toggle_voice(self):
-        """Read one utterance and send it as a chat message (if STT available)."""
         if not self.stt or not self.stt.available():
             messagebox.showinfo("Voice",
                                 "Voice input not available. Enable voice in "
                                 "Settings and install Vosk + sounddevice.")
             return
-        if self.tts and self.tts.available():
-            pass  # TTS is available; replies will be spoken if enabled
-        self._set_status("Listening…")
+        self._set_status("Listening…", C["accent"])
 
         def worker():
             try:
@@ -304,7 +454,9 @@ class JarvisApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ---- chat rendering ----
+    # =====================================================================
+    # Chat rendering
+    # =====================================================================
     def _append(self, kind, text):
         self.chat.configure(state="normal")
         label = {"user": "You", "bot": "JARVIS", "system": "›"}.get(kind, "")
@@ -325,14 +477,19 @@ class JarvisApp(tk.Tk):
         self.chat.see("end")
         self.chat.configure(state="disabled")
 
-    def _set_status(self, text):
+    def _set_status(self, text, color=None):
         self.status_var.set(text)
+        self.status_dot.configure(fg=color or C["ok"])
 
     def clear_chat(self):
         self.chat.configure(state="normal")
         self.chat.delete("1.0", "end")
         self.chat.configure(state="disabled")
         self.history = []
+        try:
+            self.memory.clear_history()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _on_model_pick(self, _evt=None):
         self.cfg["model"] = self.model_var.get()
@@ -351,7 +508,9 @@ class JarvisApp(tk.Tk):
         self.send_message()
         return "break"
 
-    # ---- settings ----
+    # =====================================================================
+    # Settings
+    # =====================================================================
     def open_settings(self):
         SettingsDialog(self, self.cfg, on_saved=self._settings_saved)
 
@@ -360,7 +519,6 @@ class JarvisApp(tk.Tk):
         save_config(self.cfg)
         self.engine = AIEngine(self.cfg)
         self.backend_var.set(self.cfg.get("ai_backend"))
-        # Re-init voice from new settings
         self.tts = None
         self.stt = None
         self._init_voice_optional()
@@ -368,22 +526,24 @@ class JarvisApp(tk.Tk):
         self._append("system", "Settings saved.")
         self.refresh_models()
 
-    # ---- models ----
+    # =====================================================================
+    # Models
+    # =====================================================================
     def refresh_models(self):
         if self.busy:
             return
         if not self.engine.is_ready():
-            self._set_status(self.engine.ready_message())
+            self._set_status(self.engine.ready_message(), C["muted"])
             if self.cfg.get("ai_backend") == "freellm":
                 messagebox.showinfo("JARVIS", self.engine.ready_message())
                 self.open_settings()
             return
         if self.cfg.get("ai_backend") == "local":
-            self._set_status(self.engine.ready_message())
+            self._set_status(self.engine.ready_message(), C["muted"])
             return
 
         self.busy = True
-        self._set_status("Fetching models…")
+        self._set_status("Fetching models…", C["accent"])
         self.send_btn.configure(state="disabled")
 
         def worker():
@@ -397,7 +557,9 @@ class JarvisApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ---- send ----
+    # =====================================================================
+    # Send
+    # =====================================================================
     def send_message(self):
         if self.busy:
             return
@@ -414,8 +576,8 @@ class JarvisApp(tk.Tk):
         self.history.append({"role": "user", "content": text})
 
         self.busy = True
-        self.send_btn.configure(state="disabled", text="…")
-        self._set_status("Thinking…")
+        self.send_btn.configure(state="disabled")
+        self._start_thinking()
         self._begin_bot()
 
         def on_token(piece):
@@ -432,7 +594,9 @@ class JarvisApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ---- queue pump ----
+    # =====================================================================
+    # Queue pump
+    # =====================================================================
     def _poll_queue(self):
         try:
             while True:
@@ -442,30 +606,30 @@ class JarvisApp(tk.Tk):
                 elif kind == "voice_text":
                     self.entry.delete("1.0", "end")
                     self.entry.insert("1.0", payload)
-                    self._set_status("Ready")
+                    self._set_status("Ready", C["ok"])
                 elif kind == "models":
                     self.model_box["values"] = payload
                     if payload and self.model_var.get() not in payload:
                         self.model_var.set(payload[0])
                         self.cfg["model"] = payload[0]
                         save_config(self.cfg)
-                    self._set_status(f"{len(payload)} models available")
+                    self._set_status(f"{len(payload)} models available", C["ok"])
                     self.busy = False
-                    self.send_btn.configure(state="normal", text="Send")
+                    self.send_btn.configure(state="normal")
                 elif kind == "done":
                     self.history.append({"role": "assistant", "content": payload})
                     self.chat.configure(state="normal")
                     self.chat.insert("end", "\n\n")
                     self.chat.configure(state="disabled")
-                    self._set_status("Ready")
+                    self._stop_thinking()
+                    self._set_status("Ready", C["ok"])
                     self.busy = False
-                    self.send_btn.configure(state="normal", text="Send")
+                    self.send_btn.configure(state="normal")
                     if self.voice_on.get() and self.tts and self.tts.available():
                         try:
                             self.tts.speak(payload)
                         except Exception:  # noqa: BLE001
                             pass
-                    # persist turn to memory
                     try:
                         self.memory.append_history(self.history[-2])
                         self.memory.append_history(self.history[-1])
@@ -475,9 +639,10 @@ class JarvisApp(tk.Tk):
                     self.chat.configure(state="normal")
                     self.chat.insert("end", f"[error: {payload}]\n\n")
                     self.chat.configure(state="disabled")
-                    self._set_status("Error")
+                    self._stop_thinking()
+                    self._set_status("Error", C["danger"])
                     self.busy = False
-                    self.send_btn.configure(state="normal", text="Send")
+                    self.send_btn.configure(state="normal")
                     messagebox.showerror("JARVIS", payload)
         except queue.Empty:
             pass
@@ -490,37 +655,38 @@ class SettingsDialog(tk.Toplevel):
         self.cfg = cfg
         self.on_saved = on_saved
         self.title("Settings")
-        self.configure(bg=BG)
+        self.configure(bg=C["bg"])
         self.resizable(False, False)
         self.transient(master)
         self.grab_set()
 
-        frm = tk.Frame(self, bg=BG)
-        frm.pack(fill="both", expand=True, padx=20, pady=18)
+        frm = tk.Frame(self, bg=C["bg"])
+        frm.pack(fill="both", expand=True, padx=24, pady=20)
 
-        # Brain selector
-        tk.Label(frm, text="AI Brain", bg=BG, fg=ACCENT, anchor="w",
+        tk.Label(frm, text="AI Brain", bg=C["bg"], fg=C["accent"], anchor="w",
                  font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w")
         self.backend_var = tk.StringVar(value=cfg.get("ai_backend", "freellm"))
         ttk.Combobox(frm, textvariable=self.backend_var, state="readonly",
-                     values=["freellm", "local"], width=42).grid(
+                     values=["freellm", "local"], width=44).grid(
                         row=1, column=0, sticky="we", pady=(2, 6))
 
         self.vars = {}
         fields = [
-            ("base_url", "Base URL (FreeLLMAPI)", "e.g. https://your-free-llm-api.com"),
-            ("api_key", "API Key", "your FreeLLMAPI key"),
-            ("model", "Model", "blank = auto-pick first"),
-            ("system_prompt", "System prompt", "JARVIS persona"),
+            ("base_url", "Base URL (FreeLLMAPI)"),
+            ("api_key", "API Key"),
+            ("model", "Model (blank = auto-pick)"),
+            ("system_prompt", "System prompt"),
         ]
         r = 2
-        for key, label, _hint in fields:
-            tk.Label(frm, text=label, bg=BG, fg=ACCENT, anchor="w",
+        for key, label in fields:
+            tk.Label(frm, text=label, bg=C["bg"], fg=C["accent"], anchor="w",
                      font=("Segoe UI", 10, "bold")).grid(
                         row=r, column=0, sticky="w", pady=(6, 0))
             if key == "system_prompt":
-                w = tk.Text(frm, height=3, width=46, bg=PANEL, fg=TEXT,
-                            insertbackground=ACCENT, relief="flat", wrap="word")
+                w = tk.Text(frm, height=3, width=46, bg=C["panel"], fg=C["text"],
+                            insertbackground=C["accent"], relief="flat",
+                            wrap="word", highlightthickness=1,
+                            highlightbackground=C["border"])
                 w.insert("1.0", str(cfg.get(key, "")))
                 w.grid(row=r + 1, column=0, sticky="we", pady=(2, 6))
                 self.vars[key] = w
@@ -528,38 +694,50 @@ class SettingsDialog(tk.Toplevel):
                 var = tk.StringVar(value=str(cfg.get(key, "")))
                 self.vars[key] = var
                 show = "•" if key == "api_key" and var.get() else ""
-                tk.Entry(frm, textvariable=var, bg=PANEL, fg=TEXT, show=show,
-                         insertbackground=ACCENT, relief="flat", width=44).grid(
+                tk.Entry(frm, textvariable=var, bg=C["panel"], fg=C["text"],
+                         show=show, insertbackground=C["accent"], relief="flat",
+                         width=44, highlightthickness=1,
+                         highlightbackground=C["border"]).grid(
                             row=r + 1, column=0, sticky="we", pady=(2, 6))
             r += 2
 
-        tk.Label(frm, text="Temperature", bg=BG, fg=ACCENT, anchor="w",
+        tk.Label(frm, text="Temperature", bg=C["bg"], fg=C["accent"], anchor="w",
                  font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
         self.temp_var = tk.DoubleVar(value=float(cfg.get("temperature", 0.7)))
         tk.Scale(frm, from_=0.0, to=1.5, resolution=0.1, orient="horizontal",
-                 variable=self.temp_var, bg=BG, fg=TEXT, troughcolor=PANEL,
-                 highlightthickness=0, length=320).grid(row=r + 1, column=0, sticky="we")
+                 variable=self.temp_var, bg=C["bg"], fg=C["text"],
+                 troughcolor=C["panel"], highlightthickness=0,
+                 length=320).grid(row=r + 1, column=0, sticky="we")
         r += 2
 
-        # Voice settings
         voice_cfg = cfg.get("voice", {}) or {}
         self.voice_enabled = tk.BooleanVar(value=bool(voice_cfg.get("enabled", False)))
-        tk.Checkbutton(frm, text="Enable voice (speak replies)", variable=self.voice_enabled,
-                       bg=BG, fg=TEXT, selectcolor=PANEL, activebackground=BG,
-                       activeforeground=TEXT, anchor="w").grid(
+        tk.Checkbutton(frm, text="Enable voice (speak replies)",
+                       variable=self.voice_enabled, bg=C["bg"], fg=C["text"],
+                       selectcolor=C["panel"], activebackground=C["bg"],
+                       activeforeground=C["text"], anchor="w").grid(
                             row=r, column=0, sticky="w", pady=(6, 0))
         r += 1
-        tk.Label(frm, text="Vosk model path (for voice input)", bg=BG, fg=ACCENT,
-                 anchor="w", font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
+        tk.Label(frm, text="Vosk model path (voice input)", bg=C["bg"],
+                 fg=C["accent"], anchor="w",
+                 font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
         self.vosk_var = tk.StringVar(value=str(voice_cfg.get("vosk_model", "")))
-        tk.Entry(frm, textvariable=self.vosk_var, bg=PANEL, fg=TEXT, relief="flat",
-                 width=44).grid(row=r + 1, column=0, sticky="we", pady=(2, 6))
+        tk.Entry(frm, textvariable=self.vosk_var, bg=C["panel"], fg=C["text"],
+                 relief="flat", width=44, highlightthickness=1,
+                 highlightbackground=C["border"]).grid(
+                    row=r + 1, column=0, sticky="we", pady=(2, 6))
         r += 2
 
-        btns = tk.Frame(frm, bg=BG)
-        btns.grid(row=r + 2, column=0, sticky="e", pady=(16, 0))
-        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="right", padx=4)
-        ttk.Button(btns, text="Save", command=self._save).pack(side="right", padx=4)
+        btns = tk.Frame(frm, bg=C["bg"])
+        btns.grid(row=r + 1, column=0, sticky="e", pady=(16, 0))
+        tk.Button(btns, text="Cancel", command=self.destroy, bg=C["panel"],
+                  fg=C["text"], relief="flat", bd=0, padx=14, pady=6,
+                  cursor="hand2").pack(side="right", padx=4)
+        b = tk.Button(btns, text="Save", command=self._save, bg=C["accent"],
+                      fg=C["bg"], relief="flat", bd=0, padx=18, pady=6,
+                      cursor="hand2", font=("Segoe UI", 9, "bold"))
+        hoverify(b, C["accent"], C["accent2"])
+        b.pack(side="right", padx=4)
 
     def _save(self):
         out = dict(self.cfg)
