@@ -77,6 +77,23 @@ Paste the PASS/FAIL lines back so features get marked done.
 
 ---
 
+## Browser modes (Chrome)
+
+The browser agent uses **Playwright**. Two modes (set in Settings):
+
+| Mode | What it does | Safety |
+|---|---|---|
+| **dedicated** (default) | Separate Chromium + JARVIS profile. Cannot see your real Chrome's logins/cookies/passwords. | ✅ Safe |
+| **real** (opt-in) | Launches **your actual Chrome profile** (logins, cookies, passwords usable by automation). | ⚠️ Risky — close all Chrome windows first; a warning + confirmation is shown |
+
+Notes:
+- In **real** mode JARVIS does **not** read/export passwords or cookies — it just
+  drives the browser. But because it's your logged-in profile, sites you're signed
+  into are accessible to the assistant.
+- Downloads always go to the approved `downloads` folder.
+- Real mode needs Chrome's "User Data" folder path (auto-suggested from
+  `%LOCALAPPDATA%\Google\Chrome\User Data`).
+
 ## Optional dependencies (for later phases)
 
 Only install what you need; the core app runs without them.

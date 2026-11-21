@@ -70,12 +70,17 @@ DEFAULT_CONFIG = {
         "max_cmd_timeout": 120,
     },
 
-    # ---- Browser agent (Playwright, dedicated profile) ----
+    # ---- Browser agent (Playwright) ----
     "browser": {
         "enabled": False,
-        "profile_dir": "",      # dedicated JARVIS profile; never the user's Chrome
+        # "dedicated" = separate safe Chromium profile (default, recommended)
+        # "real"      = launch YOUR real Chrome profile (logins/cookies) [risky]
+        "mode": "dedicated",
+        "profile_dir": "",          # dedicated profile dir (safe mode)
+        "real_profile_dir": "",     # your Chrome "User Data" folder (real mode)
+        "profile_directory": "Default",  # which Chrome profile inside User Data
         "headless": False,
-        "download_dir": "",     # confined downloads
+        "download_dir": "",         # confined downloads
     },
 
     # ---- Coding agent ----

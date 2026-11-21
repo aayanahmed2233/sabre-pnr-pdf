@@ -89,6 +89,24 @@ class JarvisApp(tk.Tk):
             except Exception:  # noqa: BLE001
                 self.coding = None
 
+        # Browser agent (Playwright; dedicated or real-Chrome mode)
+        self.browser = None
+        if BrowserAgent is not None:
+            try:
+                b = self.cfg.get("browser", {}) or {}
+                self.browser = BrowserAgent(
+                    self.security,
+                    profile_dir=b.get("profile_dir") or
+                    os.path.join(base, "jarvis_browser_profile"),
+                    download_dir=self.download_dir,
+                    headless=bool(b.get("headless", False)),
+                    mode=b.get("mode", "dedicated"),
+                    real_profile_dir=b.get("real_profile_dir", ""),
+                    profile_directory=b.get("profile_directory", "Default"),
+                )
+            except Exception:  # noqa: BLE001
+                self.browser = None
+
         # Voice (optional)
         self.tts = None
         self.stt = None
@@ -376,6 +394,20 @@ class JarvisApp(tk.Tk):
             lambda: system_monitor.list_processes(self.security),
             "safe", "read", {})
 
+        # browser agent (Playwright)
+        reg("browser_open", "Open a URL in the browser",
+            lambda u: self._browser_call("goto", u),
+            "confirm", "launch", {"url": "url"})
+        reg("browser_search", "Google search; return top results",
+            lambda q: self._browser_call("search", q),
+            "confirm", "launch", {"query": "text"})
+        reg("browser_summarize", "Fetch a page's text for summarization",
+            lambda u: self._browser_call("summarize", u),
+            "confirm", "launch", {"url": "url"})
+        reg("browser_download", "Download a file to the approved folder",
+            lambda u, f="": self._browser_call("download", u, f),
+            "confirm", "download", {"url": "url", "filename": "optional"})
+
         # keyboard / mouse
         reg("mouse_move", "Move the mouse",
             lambda x, y: keyboard_mouse.move_mouse(self.security, x, y),
@@ -412,6 +444,16 @@ class JarvisApp(tk.Tk):
         except Exception:  # noqa: BLE001
             self.tts = None
             self.stt = None
+
+    def _browser_call(self, fn, *args, **kwargs):
+        if not self.browser:
+            return ("Browser agent not available. Install Playwright: "
+                    "run setup_optional.bat (pip install playwright && "
+                    "playwright install chromium).")
+        try:
+            return getattr(self.browser, fn)(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            return f"Browser error: {e}"
 
     def emergency_stop(self):
         self.security.trigger_emergency_stop()
@@ -523,6 +565,22 @@ class JarvisApp(tk.Tk):
         self.stt = None
         self._init_voice_optional()
         self.voice_on.set(bool((self.cfg.get("voice", {}) or {}).get("enabled", False)))
+        # Re-create browser agent with new settings
+        if BrowserAgent is not None:
+            try:
+                b = self.cfg.get("browser", {}) or {}
+                self.browser = BrowserAgent(
+                    self.security,
+                    profile_dir=b.get("profile_dir") or
+                    os.path.join(app_dir(), "jarvis_browser_profile"),
+                    download_dir=self.download_dir,
+                    headless=bool(b.get("headless", False)),
+                    mode=b.get("mode", "dedicated"),
+                    real_profile_dir=b.get("real_profile_dir", ""),
+                    profile_directory=b.get("profile_directory", "Default"),
+                )
+            except Exception:  # noqa: BLE001
+                self.browser = None
         self._append("system", "Settings saved.")
         self.refresh_models()
 
@@ -728,6 +786,32 @@ class SettingsDialog(tk.Toplevel):
                     row=r + 1, column=0, sticky="we", pady=(2, 6))
         r += 2
 
+        # Browser settings
+        br = cfg.get("browser", {}) or {}
+        self.browser_enabled = tk.BooleanVar(value=bool(br.get("enabled", False)))
+        tk.Checkbutton(frm, text="Enable browser agent (Playwright)",
+                       variable=self.browser_enabled, bg=C["bg"], fg=C["text"],
+                       selectcolor=C["panel"], activebackground=C["bg"],
+                       activeforeground=C["text"], anchor="w").grid(
+                            row=r, column=0, sticky="w", pady=(6, 0))
+        r += 1
+        tk.Label(frm, text="Browser mode", bg=C["bg"], fg=C["accent"], anchor="w",
+                 font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
+        self.browser_mode = tk.StringVar(value=br.get("mode", "dedicated"))
+        ttk.Combobox(frm, textvariable=self.browser_mode, state="readonly",
+                     values=["dedicated", "real"], width=42).grid(
+                        row=r + 1, column=0, sticky="we", pady=(2, 6))
+        r += 2
+        tk.Label(frm, text="Chrome 'User Data' folder (real mode)", bg=C["bg"],
+                 fg=C["accent"], anchor="w",
+                 font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
+        self.real_profile_var = tk.StringVar(value=str(br.get("real_profile_dir", "")))
+        tk.Entry(frm, textvariable=self.real_profile_var, bg=C["panel"],
+                 fg=C["text"], relief="flat", width=44, highlightthickness=1,
+                 highlightbackground=C["border"]).grid(
+                    row=r + 1, column=0, sticky="we", pady=(2, 6))
+        r += 2
+
         btns = tk.Frame(frm, bg=C["bg"])
         btns.grid(row=r + 1, column=0, sticky="e", pady=(16, 0))
         tk.Button(btns, text="Cancel", command=self.destroy, bg=C["panel"],
@@ -751,6 +835,21 @@ class SettingsDialog(tk.Toplevel):
         voice["enabled"] = bool(self.voice_enabled.get())
         voice["vosk_model"] = self.vosk_var.get().strip()
         out["voice"] = voice
+
+        browser = dict(out.get("browser", {}) or {})
+        browser["enabled"] = bool(self.browser_enabled.get())
+        browser["mode"] = self.browser_mode.get()
+        browser["real_profile_dir"] = self.real_profile_var.get().strip()
+        out["browser"] = browser
+
+        if browser["enabled"] and browser["mode"] == "real":
+            ok = messagebox.askyesno(
+                "Real Chrome (risky)",
+                "Real mode will launch YOUR Chrome profile (logins, cookies, "
+                "passwords are usable by automation). Continue?", parent=self)
+            if not ok:
+                return
+
         if out["ai_backend"] == "freellm" and (not out["base_url"] or not out["api_key"]):
             messagebox.showwarning("Settings",
                                    "Base URL and API Key are required for the "

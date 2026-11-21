@@ -1,19 +1,38 @@
 """
-JARVIS browser agent.
+JARVIS browser agent (Playwright).
 
-Uses Playwright with a DEDICATED profile directory (never the user's real
-Chrome profile, cookies, or saved passwords). Provides research, navigation,
-downloads (to an approved folder), and page summarization (text extraction).
+Two modes:
+  - "dedicated" (safe, default): a separate Chromium + JARVIS profile. It does
+    NOT see your real Chrome's logins, cookies, or passwords.
+  - "real" (risky, opt-in): launches YOUR real Chrome profile (logins/cookies)
+    via Playwright's persistent context. Chrome must be fully closed first.
+    JARVIS never reads/exports passwords or cookies; it just drives the browser.
 
-Playwright is optional: if not installed, all methods fail gracefully with a
-clear message. Nothing here touches the user's main browser data.
+Playwright is optional: if not installed, methods raise a clear message.
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from core.security import Security, SecurityError, Risk
+
+
+def default_chrome_user_data() -> str:
+    """Best-guess path to Chrome's 'User Data' folder on Windows."""
+    local = os.environ.get("LOCALAPPDATA", "")
+    return os.path.join(local, "Google", "Chrome", "User Data")
+
+
+def chrome_is_running() -> bool:
+    """True if chrome.exe appears to be running (Windows)."""
+    try:
+        import subprocess
+        out = subprocess.run(["tasklist", "/fi", "imagename eq chrome.exe", "/nh"],
+                             capture_output=True, text=True, timeout=10).stdout
+        return "chrome.exe" in out.lower()
+    except Exception:  # noqa: BLE001
+        return False
 
 
 @dataclass
@@ -22,51 +41,67 @@ class BrowserAgent:
     profile_dir: str
     download_dir: str
     headless: bool = False
+    mode: str = "dedicated"           # "dedicated" | "real"
+    real_profile_dir: str = ""        # Chrome "User Data" (real mode)
+    profile_directory: str = "Default"
     _pw = None
     _browser = None
     _context = None
 
     # ---- lifecycle ----
     def _ensure_started(self):
-        if self._browser is not None:
+        if self._context is not None:
             return
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as e:
             raise SecurityError(
                 "Playwright is not installed. Install it with:\n"
-                "  pip install playwright\n  playwright install chromium"
-            ) from e
+                "  pip install playwright\n  playwright install chromium") from e
 
-        os.makedirs(self.profile_dir, exist_ok=True)
         os.makedirs(self.download_dir, exist_ok=True)
-        # Contain downloads
         self.security.add_write_root(self.download_dir)
-        self.security.add_read_root(self.profile_dir)
-
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=self.headless)
-        self._context = self._browser.new_context(
-            accept_downloads=True,
-            user_data_dir=None,  # dedicated profile dir used via launch_persistent
-        )
 
-    def launch_persistent(self):
-        """Use a persistent DEDICATED profile (separate from user Chrome)."""
-        if self._browser is not None:
-            return
+        if self.mode == "real":
+            udd = self.real_profile_dir or default_chrome_user_data()
+            if not os.path.isdir(udd):
+                raise SecurityError(
+                    f"Chrome 'User Data' folder not found: {udd}\n"
+                    "Set the correct path in Settings.")
+            if chrome_is_running():
+                raise SecurityError(
+                    "Chrome is currently running. Close ALL Chrome windows, then "
+                    "try again (the profile is locked while Chrome is open).")
+            # High-risk: launching the user's real profile.
+            self.security.authorize(
+                "launch", Risk.CONFIRM,
+                "Launch YOUR real Chrome profile (logins/cookies)?")
+            self._context = self._pw.chromium.launch_persistent_context(
+                udd, headless=self.headless, accept_downloads=True,
+                args=[f"--profile-directory={self.profile_directory}"])
+        else:
+            os.makedirs(self.profile_dir, exist_ok=True)
+            self.security.add_read_root(self.profile_dir)
+            self._context = self._pw.chromium.launch_persistent_context(
+                self.profile_dir, headless=self.headless, accept_downloads=True)
+
+        self._browser = self._context.browser
+
+    def connect_cdp(self, endpoint: str = "http://localhost:9222"):
+        """Attach to an already-running Chrome started with remote debugging."""
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as e:
-            raise SecurityError(
-                "Playwright not installed. Run: pip install playwright && "
-                "playwright install chromium") from e
-        os.makedirs(self.profile_dir, exist_ok=True)
-        self.security.add_read_root(self.profile_dir)
-        self._pw = sync_playwright().start()
-        self._context = self._pw.chromium.launch_persistent_context(
-            self.profile_dir, headless=self.headless, accept_downloads=True)
-        self._browser = self._context.browser
+            raise SecurityError("Playwright not installed: pip install playwright") from e
+        self.security.authorize("launch", Risk.CONFIRM,
+                                f"Attach to Chrome at {endpoint}")
+        if self._pw is None:
+            self._pw = sync_playwright().start()
+        self._browser = self._pw.chromium.connect_over_cdp(endpoint)
+        self._context = self._browser.contexts[0] if self._browser.contexts \
+            else self._browser.new_context()
+        return f"Attached to Chrome at {endpoint}"
 
     # ---- navigation ----
     def goto(self, url: str) -> str:
@@ -82,7 +117,6 @@ class BrowserAgent:
 
     # ---- research ----
     def search(self, query: str) -> str:
-        """Run a Google search and return the top result titles+links."""
         self.security.authorize("launch", Risk.CONFIRM, f"Search: {query}")
         self._ensure_started()
         page = self._context.new_page()
@@ -105,7 +139,6 @@ class BrowserAgent:
 
     # ---- summarization ----
     def summarize(self, url: str, max_chars: int = 4000) -> str:
-        """Fetch a page and return its visible text (for the AI to summarize)."""
         self.security.authorize("launch", Risk.CONFIRM, f"Read page: {url}")
         self._ensure_started()
         page = self._context.new_page()
@@ -117,7 +150,6 @@ class BrowserAgent:
 
     # ---- downloads ----
     def download(self, url: str, filename: str = "") -> str:
-        """Download a file into the approved download dir."""
         self.security.authorize("download", Risk.CONFIRM, f"Download {url}")
         self._ensure_started()
         os.makedirs(self.download_dir, exist_ok=True)
