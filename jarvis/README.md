@@ -111,8 +111,23 @@ jarvis/
 
 ## Build a standalone jarvis.exe
 
-Double-click **`build.bat`** (Python 3.12, Add to PATH). Output:
-`dist\jarvis.exe`. Settings live in `config.json` next to the exe.
+Double-click **`build.bat`**. It prefers Python 3.12 (via the `py` launcher) and
+warns if your Python is too new. Output: **`dist\jarvis.exe`** — a single file;
+copy it anywhere. Settings live in `config.json` next to the exe.
+
+### Build steps (once)
+1. Install **Python 3.12** (Add to PATH) — 3.14/3.15 may be too new for PyInstaller.
+2. Run **`build.bat`** → wait → `dist\jarvis.exe`.
+3. Test: double-click `dist\jarvis.exe`, set FreeLLMAPI in Settings, chat.
+
+### Optional: installer
+1. Install **Inno Setup** (https://jrsoftware.org/isdl.php).
+2. Open **`installer.iss`** → Compile → `Output\JARVIS-Setup.exe`.
+
+### Troubleshooting
+- *"too new for PyInstaller"* → install Python 3.12, re-run build.bat.
+- *Antivirus flags jarvis.exe* → common PyInstaller false positive; allow it.
+- *App won't start* → run `python main.py` to see the real error, and send it.
 
 ## Notes
 

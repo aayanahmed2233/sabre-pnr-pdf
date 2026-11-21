@@ -1,62 +1,84 @@
 @echo off
 REM ==========================================================================
-REM  Build JARVIS into a single Windows .exe using PyInstaller.
-REM  Just double-click this file (or run it from a command prompt).
+REM  JARVIS - FINAL BUILD (Phase 8)
+REM  Builds a single Windows exe: dist\jarvis.exe
+REM
+REM  Best with Python 3.10 - 3.13 (3.12 recommended). Python 3.15 may be too
+REM  new for PyInstaller. If you have the "py" launcher with 3.12, this script
+REM  prefers it automatically.
 REM ==========================================================================
-
-REM Always work from the folder that contains THIS script, so main.py and
-REM requirements.txt are found no matter where the script is launched from.
 cd /d "%~dp0"
+setlocal enabledelayedexpansion
 
 echo.
-echo === JARVIS build script ===
+echo === JARVIS final build ===
 echo Working in: %cd%
 echo.
 
-REM Check Python is installed
-python --version >nul 2>&1
+REM ---- pick a Python interpreter (prefer py -3.12) ----
+set "PY=python"
+py -3.12 --version >nul 2>&1
+if not errorlevel 1 (
+    set "PY=py -3.12"
+    echo Using py launcher -^> Python 3.12
+) else (
+    echo Using default 'python'
+)
+
+%PY% --version >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Python was not found on PATH.
-    echo Install Python 3 from https://www.python.org/downloads/windows/
-    echo IMPORTANT: on the first install screen, tick "Add python.exe to PATH".
-    echo Then re-run this script.
+    echo [ERROR] Python not found. Install Python 3.12 from
+    echo         https://www.python.org/downloads/windows/
+    echo         and TICK "Add python.exe to PATH".
     pause
     exit /b 1
 )
 
-REM Make sure main.py is actually next to this script
+REM ---- warn if Python is very new ----
+%PY% -c "import sys; v=sys.version_info[:2]; sys.exit(0 if (3,10)<=v<=(3,13) else 1)" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo [WARNING] Your Python may be too new for PyInstaller ^(3.14+^).
+    echo           If the build fails, install Python 3.12 and re-run.
+    echo.
+)
+
 if not exist "main.py" (
-    echo [ERROR] main.py was not found next to build.bat.
-    echo Keep build.bat, run.bat, requirements.txt and main.py in the SAME folder.
-    echo Current folder: %cd%
-    dir
+    echo [ERROR] main.py not found next to build.bat.
+    echo Keep all JARVIS files and folders ^(core, ai, tools, ui, ...^) together.
     pause
     exit /b 1
 )
 
 echo Installing / checking PyInstaller...
-python -m pip install --upgrade pyinstaller
+%PY% -m pip install --upgrade pyinstaller
 if errorlevel 1 (
-    echo [ERROR] Failed to install PyInstaller.
-    echo Check your internet connection and try again.
+    echo [ERROR] Failed to install PyInstaller. Check internet connection.
     pause
     exit /b 1
 )
 
 echo.
-echo Building jarvis.exe (this can take a minute)...
-python -m PyInstaller --noconfirm --clean --onefile --windowed ^
+echo Building jarvis.exe ^(can take a few minutes^)...
+%PY% -m PyInstaller --noconfirm --clean --onefile --windowed ^
     --name jarvis ^
+    --paths "%cd%" ^
     main.py
 if errorlevel 1 (
-    echo [ERROR] Build failed.
+    echo [ERROR] Build failed. See messages above.
     pause
     exit /b 1
 )
 
 echo.
-echo === Done! Your app is here:  %cd%\dist\jarvis.exe ===
-echo You can move jarvis.exe anywhere and run it. Your settings are saved in
-echo config.json next to the .exe.
+if exist "dist\jarvis.exe" (
+    echo === SUCCESS ===
+    echo Your app: %cd%\dist\jarvis.exe
+    echo Copy it anywhere and run. Settings save to config.json next to it.
+    echo.
+    echo Optional: build an installer with Inno Setup using installer.iss
+) else (
+    echo [ERROR] Build finished but dist\jarvis.exe was not found.
+)
 echo.
 pause

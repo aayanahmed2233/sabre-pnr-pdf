@@ -8,6 +8,7 @@ executables require confirmation (and can be blocked entirely by policy).
 import os
 import shutil
 import subprocess
+import sys
 
 from core.security import Security, SecurityError, Risk
 
@@ -71,7 +72,7 @@ def open_folder(security: Security, path: str) -> str:
     if not security.can_read(p):
         raise SecurityError(f"Folder outside allowed roots: {p}")
     security.authorize("launch", Risk.SAFE, f"Open folder {p}")
-    if os.sys.platform == "win32":  # noqa
+    if sys.platform == "win32":
         os.startfile(p)  # type: ignore[attr-defined]
     else:
         subprocess.Popen(["xdg-open", p])
@@ -84,7 +85,7 @@ def shutdown(security: Security, action: str = "shutdown") -> str:
     if action not in ("shutdown", "restart", "logoff"):
         raise SecurityError("Unknown power action.")
     security.authorize("shutdown", Risk.CONFIRM, f"{action} the computer?")
-    if os.sys.platform == "win32":  # noqa
+    if sys.platform == "win32":
         flag = {"shutdown": "/s", "restart": "/r", "logoff": "/l"}.get(action)
         subprocess.Popen(["shutdown", flag, "/t", "5"])
     else:

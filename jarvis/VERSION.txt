@@ -1,0 +1,17 @@
+JARVIS - Windows AI Assistant
+Version: 1.0
+Python: 3.10 - 3.13 (3.12 recommended)
+Build: PyInstaller (see build.bat)
+
+Modules:
+  core/       config, security (permission gate), logging
+  ai/         AI engine (FreeLLMAPI primary + local stub)
+  tools/      registry, file, app, system, keyboard/mouse, screen reader
+  agents/     coding agent, browser agent (Playwright)
+  memory/     local JSON memory
+  voice/      Vosk STT + SAPI TTS
+  multiagent/ coordinator (researcher/developer/tester/file manager)
+  ui/         animated arc-reactor + theme widgets
+
+Optional deps (voice/browser/OCR): see setup_optional.bat
+Installer (optional): Inno Setup + installer.iss
