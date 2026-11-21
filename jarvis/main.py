@@ -384,9 +384,12 @@ class JarvisApp(tk.Tk):
             lambda path: file_agent.delete_path(self.security, path),
             "confirm", "delete", {"path": "path"})
 
-        reg("launch_app", "Launch an application",
+        reg("launch_app", "Launch an application (scans the system to find it)",
             lambda app, args="": app_agent.launch_app(self.security, app, args),
             "confirm", "launch", {"app": "name", "args": "optional"})
+        reg("find_app", "Find where an app is installed (returns its path)",
+            lambda name: app_agent.find_app(self.security, name),
+            "safe", "read", {"name": "app name"})
         reg("open_folder", "Open a folder in Explorer",
             lambda path: app_agent.open_folder(self.security, path),
             "safe", "launch", {"path": "folder"})
@@ -467,6 +470,11 @@ class JarvisApp(tk.Tk):
             '{"tool": "<tool_name>", "args": {<param>: <value>}}',
             "After a tool result is provided, continue and answer the user "
             "normally in a friendly way. Do not mention the JSON.",
+            "IMPORTANT: To open an app, call launch_app with the app name "
+            "(e.g. {\"tool\":\"launch_app\",\"args\":{\"app\":\"brave\"}}). It "
+            "searches the whole system and confirms it launched. Do NOT use "
+            "search_files to find apps, and do NOT guess. To just open a website "
+            "in the default browser, use launch_app with app \"browser\".",
             "Available tools:",
         ]
         for t in self.registry.describe():
