@@ -17,6 +17,7 @@ If you also pass a real base_url + key, it will attempt ONE live request:
 
 import os
 import sys
+import json
 import tempfile
 
 # Make 'core' and 'ai' importable when run from the jarvis folder.
@@ -150,7 +151,6 @@ def test_live(base_url, key, model):
 
 
 def main():
-    import json
     print("=" * 60)
     print(" J.A.R.V.I.S  Phase 1 self-test")
     print("=" * 60)
